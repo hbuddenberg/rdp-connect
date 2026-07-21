@@ -34,7 +34,13 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y bats shellcheck jq libnotify-bin util-linux
+          # bats + bats-assert + bats-support: the .bats suite and tests/test_helper.bash
+          # use assert_success/assert_output/assert_equal (not built-in to bats-core).
+          # shellcheck: lint target. jq: compute_dpi_flags. libnotify-bin: notify-send.
+          # util-linux: flock. (Defensive — no current test shells out to the engine.)
+          sudo apt-get install -y \
+            bats bats-assert bats-support \
+            shellcheck jq libnotify-bin util-linux
 
       - name: make ci
         run: make ci

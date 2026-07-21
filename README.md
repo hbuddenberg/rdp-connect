@@ -3,7 +3,7 @@
 ![status](https://img.shields.io/badge/status-baseline--hardened-brightgreen)
 ![capabilities](https://img.shields.io/badge/capabilities-5-blue)
 ![distros](https://img.shields.io/badge/distros-Arch%20%E2%9C%93%20%7C%20Debian%20%E2%9C%93%20%7C%20Fedora%20%E2%9C%93%20%7C%20Alpine%20%E2%9C%97-orange)
-![tests](https://img.shields.io/badge/tests-46%20probe%20scenarios-brightgreen)
+![tests](https://img.shields.io/badge/tests-66%20bats%20cases%20(7%20files)-brightgreen)
 ![spec](https://img.shields.io/badge/spec-driven-openspec-blueviolet)
 
 RDP connection framework for Hyprland/Wayland built on `xfreerdp3`.
@@ -165,7 +165,9 @@ The smoke target works on a host without `xfreerdp3` / `hyprctl` because `rdp-co
 
 ### SDD context
 
-This test harness is being built up incrementally under the `strict-tdd-enable` change. See **[`openspec/changes/strict-tdd-enable/`](openspec/changes/strict-tdd-enable/)** for the proposal, design, and task breakdown. PR1 lands the tooling (Makefile + CI + helper + this README section); PR2 migrates the 46 probe scenarios to `*.bats`; PR3 extracts two pure functions from the engine and flips `strict_tdd: true`.
+This test harness was built under the `strict-tdd-enable` change. See **[`openspec/changes/strict-tdd-enable/`](openspec/changes/strict-tdd-enable/)** for the proposal, design, and task breakdown. PR1 landed the tooling (Makefile + CI + helper + this README section); PR2 migrated the 46 probe scenarios to `*.bats`; PR3 extracted two more pure functions from the engine (`trim_profile_fields`, `extract_session_error`), added the cleanup-session + engine-security bats coverage those extractions unlock, and flipped `strict_tdd: true` — every future SDD change now follows the red-green-refactor cycle at the unit level.
+
+Current suite: **66 bats cases across 7 files** (parser 24 + hidpi 8 + pid-path 6 + vpn-trim 10 + harness 10 + cleanup-session 6 + engine-security 2).
 
 ## Specifications
 

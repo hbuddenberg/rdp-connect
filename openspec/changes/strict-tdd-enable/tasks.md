@@ -42,29 +42,29 @@ Each PR is independently mergeable + revertable. Rollback = `git revert` PR3 →
 
 Flag stays `false`. Lands entry points PR2/PR3 plug into.
 
-- [ ] **T1.1** `feat(build): add Makefile with test/lint/install/smoke/verify-manifest targets`
+- [x] **T1.1** `feat(build): add Makefile with test/lint/install/smoke/verify-manifest targets`
   - Files: `Makefile` (new)
   - Deps: — · Size: ~30 · PR1
   - `@test` added: none (exercised by T2.6 `harness.bats`)
-  - [ ] manual-verification: Makefile defines 5 targets + `ci` alias; `test` runs `bats tests/`; `lint` shellchecks all `*.bash`/`*.sh` excl. `tests/fixtures/`
+  - [x] manual-verification: Makefile defines 5 targets + `ci` alias; `test` runs `bats tests/`; `lint` shellchecks all `*.bash`/`*.sh` excl. `tests/fixtures/`
 
-- [ ] **T1.2** `ci: add GitHub Actions workflow running make ci on ubuntu-latest`
+- [x] **T1.2** `ci: add GitHub Actions workflow running make ci on ubuntu-latest`
   - Files: `.github/workflows/test.yml` (new)
   - Deps: T1.1 · Size: ~30 · PR1
   - `@test` added: none (exercised by T2.6)
-  - [ ] manual-verification: triggers on `push`+`pull_request` to `main`; `ubuntu-latest`; apt installs `bats shellcheck jq libnotify-bin util-linux`; runs `make ci`; uploads `tests/` on failure
+  - [x] manual-verification: triggers on `push`+`pull_request` to `main`; `ubuntu-latest`; apt installs `bats shellcheck jq libnotify-bin util-linux`; runs `make ci`; uploads `tests/` on failure
 
-- [ ] **T1.3** `test: add tests/test_helper.bash (lib source, setup_test_home, parse_env_safe_under_setu)`
+- [x] **T1.3** `test: add tests/test_helper.bash (lib source, setup_test_home, parse_env_safe_under_setu)`
   - Files: `tests/test_helper.bash` (new)
   - Deps: — (lib exists) · Size: ~55 · PR1
   - `@test` added: none (enables T2.6 scenarios 5–6: `bats_require_minimum_version 1.5.0`, `setup_test_home`)
-  - [ ] manual-verification: helper sources `lib/rdp-common.bash`; calls `bats_require_minimum_version 1.5.0`; `setup_test_home` exports `HOME=$BATS_TMPDIR/home`; provides `parse_env_safe_under_setu` (child bash) + `assert_probes_pass` alias
+  - [x] manual-verification: helper sources `lib/rdp-common.bash`; calls `bats_require_minimum_version 1.5.0`; `setup_test_home` exports `HOME=$BATS_TMPDIR/home`; provides `parse_env_safe_under_setu` (child bash) + `assert_probes_pass` alias
 
-- [ ] **T1.4** `docs(readme): add bats-core distro install matrix`
+- [x] **T1.4** `docs(readme): add bats-core distro install matrix`
   - Files: `README.md`
   - Deps: — · Size: ~30 · PR1
   - `@test` added: none
-  - [ ] manual-verification: README documents bats-core install for Arch/Ubuntu/Fedora (dev-only, NOT a runtime dep)
+  - [x] manual-verification: README documents bats-core install for Arch/Ubuntu/Fedora (dev-only, NOT a runtime dep)
 
 ## PR2 — Bats migration + trim extraction (`pr2/bats-migration`, ~1080 LOC, size:exception, Medium risk)
 

@@ -159,18 +159,11 @@ deploy_files() {
     install -D -m 600 "$SCRIPT_DIR/i18n/en.env" ~/.config/rdp/i18n/en.env
     install -D -m 600 "$SCRIPT_DIR/template/template.env" ~/.config/rdp/template.env
 
-    # User-edited profiles are preserved ([ -f ] guard — existing partner.env pattern)
-    if [ ! -f ~/.config/rdp/profiles/partner.env ]; then
-        cat << 'PROFILE_PARTNER' > ~/.config/rdp/profiles/partner.env
-HOST="hb-tipartner"
-DOMAIN="MicrosoftAccount"
-USER_RDP="h.buddenberg@tipartner.cl"
-PASS_RDP="INGRESA_TU_PASSWORD_AQUI"
-VPN_CHECK=""
-PREFERRED_WS="3"
-LANG_OVERRIDE="es"
-PROFILE_PARTNER
-    fi
+    # User profiles are NOT created by the installer — it is intentionally
+    # neutral and deterministic. Users create their own profiles via:
+    #   rdp-connect --new <name>
+    # This was a bug in the original baseline (shipped a Ti-Partner-specific
+    # partner.env with a real corporate email on every install).
 
     # Lib + engine (overwrite every run — idempotent)
     install -D -m 644 "$SCRIPT_DIR/lib/rdp-common.bash" ~/.local/lib/rdp/rdp-common.bash

@@ -255,3 +255,44 @@ EOF
   run make -C "$REPO_ROOT" smoke
   assert_success
 }
+
+# ============================================================================
+# T3.4 — R6 two-key flip canary (NEW)
+# ============================================================================
+# The strict-tdd-enable change activates strict TDD by flipping TWO keys in
+# openspec/config.yaml in lockstep:
+#   L20   strict_tdd: false -> true   (top-level gate)
+#   L68   tdd:      false -> true   (under rules.apply — what sdd-apply reads)
+#
+# The flip is the silent no-op risk of this change: if only ONE key flips
+# (e.g. someone edits L20 but forgets L68, or vice versa), strict_tdd is
+# nominally "on" but no phase actually enforces it. The sdd-verify phase
+# would have nothing to check against. This canary catches that by grepping
+# BOTH lines with strict line-anchoring:
+#   - `^strict_tdd: true$`         — top of file, no indent
+#   - `^    tdd: true$`            — exactly 4 spaces indent (under `apply:`)
+# A partial flip fails one of the two greps; the @test fails loud.
+#
+# Why harness.bats (not a new file): the canary is a harness-level invariant
+# (it asserts the project's testing config is well-formed), matching the
+# other config-file greps already in this file (ci_workflow_well_formed,
+# ci_workflow_uploads_logs_on_failure). It belongs with the Makefile + CI
+# structural assertions, not with the lib-unit coverage in cleanup-session
+# or engine-security.
+@test "both_strict_tdd_keys_flipped" {
+  local cfg="$REPO_ROOT/openspec/config.yaml"
+  [ -f "$cfg" ] || fail "openspec/config.yaml missing at $cfg"
+
+  # L20 anchor: top-level strict_tdd flag.
+  run grep -E '^strict_tdd: true$' "$cfg"
+  assert_success
+  [[ "$output" == "strict_tdd: true" ]]
+
+  # L68 anchor (post-PR3 line number): rules.apply.tdd, 4-space indent.
+  # The 4-space indent is what distinguishes `rules.apply.tdd` from any
+  # incidental `tdd: true` substring inside the testing.recommendation
+  # multi-line block.
+  run grep -E '^    tdd: true$' "$cfg"
+  assert_success
+  [[ "$output" == "    tdd: true" ]]
+}

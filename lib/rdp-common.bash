@@ -185,6 +185,50 @@ trim_profile_fields() {
 }
 
 # ---------------------------------------------------------------------------
+# T3.1 — Per-session error extractor (lifted from engine cleanup() trap)
+# ---------------------------------------------------------------------------
+# extract_session_error <log_file> <pid>
+#
+# Outputs the LAST line written by <pid>'s session that matches
+# /error|failed|status|connect/ (case-insensitive), scanning FORWARD from
+# <pid>'s SESSION_START marker. Empty output if no marker exists for <pid>
+# (legacy log), no matching line exists in this session, or <log_file> is
+# missing/unreadable. PID matching is prefix-safe: pid=222 does NOT match a
+# marker for pid=2222 (the `([^0-9]|$)` anchor demands a non-digit or EOL
+# immediately after the pid digits).
+#
+# Pure text transformation over a file — NO external state, NO side effects,
+# NO notify-send, NO exit. Safe to unit-test directly.
+#
+# Caller contract (engine cleanup trap):
+#   LAST_ERROR="$(extract_session_error "$LOG_FILE" "$$")"
+# The caller is responsible for the empty-output fallback message; this fn
+# just returns the matched line (or empty).
+#
+# Extraction provenance: verbatim lift of engine/rdp-connect cleanup() awk
+# extractor (engine L249-253 pre-T3.1). The file-existence guard moved INTO
+# this fn; the engine's old `[ -n "${START_TIME:-}" ]` defensive guard is
+# dropped at the call site (the EXIT trap registers AFTER START_TIME is
+# assigned at engine L192, so the guard is statically true at every cleanup
+# invocation). Parity is reverified by
+# tests/cleanup-session.bats::extract_session_error_byte_identical_on_fixtures
+# and the 4 fixture-driven @test blocks in that file.
+#
+# No associative arrays are declared here — the T2.5 `declare -gA` fix does
+# NOT apply (only `local` scalars). Sourcing this fn from both top-level
+# (engine) and function-context (bats `load` chain) is safe by construction.
+extract_session_error() {
+  local log_file="$1" pid="$2"
+  [[ -f "$log_file" ]] || return 0
+  # shellcheck disable=SC2012  # awk is the canonical line-scan here; $(<file) does not stream
+  awk -v pid="$pid" '
+    $0 ~ /\[SESSION_START\]/ && $0 ~ "pid="pid"([^0-9]|$)" { found=1; next }
+    found && tolower($0) ~ /error|failed|status|connect/ { last=$0 }
+    END { if (last) print last }
+  ' "$log_file" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
 # F5 — uid-private PID path under XDG_RUNTIME_DIR
 # ---------------------------------------------------------------------------
 # compute_pid_path <profile>

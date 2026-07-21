@@ -1,0 +1,1 @@
+[2026-07-21 11:00:05] [ERROR] VPN requerida (10.8.0.1) inalcanzable. Abortando.

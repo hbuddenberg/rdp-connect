@@ -17,24 +17,36 @@ context: |
   per-profile flock single-instance guard; pre-flight TCP probe on :3389; audit logs under ~/.local/state/rdp.
   Style: XDG Base Directories; Spanish inline comments; UTF-8; chmod 600 (secrets) / 700 (dirs).
 
-strict_tdd: false
+strict_tdd: true
 
 testing:
-  runner: none
-  framework: none
+  runner: bats
+  framework: bats-core
   static_analysis: "shellcheck (/usr/bin/shellcheck, installed)"
-  coverage: none
-  unit: none
-  integration: none
+  coverage: "n/a (bash has no line-coverage collector; scenario-coverage is the proxy — see test-harness-delta spec)"
+  unit: "bats tests/ (65 @test blocks across 7 .bats files post-PR3)"
+  integration: "manual (engine integration via `make smoke`; real xfreerdp3/hyprctl/jq/flock/notify-send required)"
   e2e: "manual (xfreerdp3 session against a real RDP host)"
   recommendation: |
-    No bash test framework is installed (only shellcheck). To enable TDD later:
-    install bats-core (and optionally shunit2), add a tests/ dir, wire a `make test`
-    target, and extract pure functions (parse_env_safe, scale comparison, monitor flags)
-    into a sourcable library so they can be unit-tested without launching xfreerdp3.
-    Until then, every change MUST be manually verified via:
-      shellcheck install-rdp-framework.sh && bash -n install-rdp-framework.sh
-    plus a dry-run in a throwaway HOME (HOME=$(mktemp -d) ./install-rdp-framework.sh).
+    bats-core 1.5.0+ is the test runner (floor enforced at load by
+    tests/test_helper.bash). The installer does NOT install bats — it is a
+    DEV dependency only. Install via your package manager (pacman/apt/dnf)
+    or from source; see README.md "Testing" for the distro matrix and the
+    bats-support/bats-assert source-install pattern.
+
+    Canonical entry points:
+      make test    — bats tests/
+      make lint    — shellcheck --severity=warning over engine + lib + installer + bootstrap + tests/*.bash
+      make ci      — lint + test (what GitHub Actions runs on every PR)
+      make smoke   — install + throwaway-HOME rdp-connect --help (engine --help fires before require_cmd, so no xfreerdp3 needed)
+
+    With strict_tdd: true, every future SDD change MUST follow the
+    strict-tdd cycle (red-green-refactor) at the unit level. The harness
+    is now in place: lib-extracted pure functions (parse_env_safe,
+    compute_pid_path, compute_dpi_flags, trim_profile_fields,
+    extract_session_error) are unit-tested directly; engine integration
+    paths (xfreerdp3, hyprctl, flock, /dev/tcp) remain manual-verify per
+    the engine-robustness spec footers.
 
 rules:
   proposal:
@@ -53,12 +65,12 @@ rules:
     - "Group by phase with hierarchical numbering."
     - "Each task completable in one session; include a [ ] manual-verification checkbox per task."
   apply:
-    tdd: false
-    test_command: "shellcheck install-rdp-framework.sh && bash -n install-rdp-framework.sh"
+    tdd: true
+    test_command: "make test (bats tests/)"
     manual_check: "Re-run installer with HOME=$(mktemp -d); exercise the affected mode on a throwaway profile."
   verify:
-    test_command: "shellcheck install-rdp-framework.sh"
-    build_command: "bash -n install-rdp-framework.sh"
+    test_command: "make ci (lint + test)"
+    build_command: "make lint (shellcheck --severity=warning)"
     coverage_threshold: 0
   archive:
     - "Warn before merging destructive deltas into openspec/specs/."

@@ -192,3 +192,205 @@ Standard Mode (strict_tdd: false). No TDD cycle required. Each task ends with sh
 ### PR2 Issues Found
 
 - See PR2 Discoveries section above. No blockers; all 3 tasks completed.
+
+---
+
+## PR2 — bugfix slice (T2.4 + T2.5)
+
+> **Branch**: `pr2/robustness-installer` (continuation — same branch, 2 new
+> commits on top of the 4 from the original PR2 slice)
+> **Commits**: `eace9b1` (T2.4) → `f4da861` (T2.5)
+> **Mode**: Standard (strict_tdd: false — no test framework; shellcheck only).
+> Each fix ends with probe / scenario verification per the cached testing
+> capabilities.
+> **Scope**: Two bugs surfaced by post-PR2 review of the parser and the
+> cleanup trap. Neither was codified in the original spec — both will be
+> amended into the robustness spec at archive time (the parser robustness
+> scenarios and the cleanup session-isolation scenario).
+
+### Bugfix-slice Goal
+
+Close two review-surfaced bugs on the existing PR2 branch:
+
+- **Bug A (parser)**: `parse_env_safe` misrejected legitimately-terminated
+  quoted values that had trailing whitespace, CRLF, or an inline `# comment`
+  after the closing quote — all reported as the misleading "unterminated
+  quote". Common failure modes: Windows-edited profiles (`VPN_CHECK=""\r\n`),
+  trailing whitespace invisible in editors, inline comments after the closer.
+- **Bug B (cleanup)**: `cleanup()` reported stale ERROR lines from PREVIOUS
+  sessions in the same per-profile LOG_FILE as the current session's failure
+  cause, because `tail -n 15 | grep error` had no notion of where the current
+  session's log lines started.
+
+### Bugfix-slice Discoveries
+
+- **T2.4 — old quoted-value branch had a SECOND silent bug beyond the
+  misdiagnosis.** While implementing the fix, I discovered the old
+  `${raw:1:${#raw}-2}` slice for `HOST="value"garbage` produced value
+  `value"garbag` (literal closing quote + trailing junk inside the value)
+  rather than rejecting the line. The new "first closing quote + tail
+  validation" logic catches this case explicitly with the clearer
+  `"unexpected content after closing quote: '<tail preview>'"` message.
+  Fixture F20 codifies this — it would have silently corrupted the value
+  under the old parser.
+
+- **T2.4 — first-closing-quote search preserves interior `#` correctly.**
+  The skeleton uses `${rest%%"$q"*}` to find the part BEFORE the first
+  closing quote. This is exactly what makes `HOST="server # production"`
+  keep `# production` inside the value: the first `"` after the leading
+  one is the closer, so the `#` never gets a chance to be interpreted as
+  a comment delimiter. Fixture F23 re-verifies this (was F4 in the
+  original suite — still passes).
+
+- **T2.4 — CRLF strip placement matters.** The `line="${line%$'\r'}"`
+  strip happens BEFORE the leading-whitespace trim, BEFORE the blank-line
+  / full-line-comment check, and BEFORE the `*=` split. This is load-
+  bearing: if the strip came after the leading-whitespace trim, a line
+  like `  HOST="x"\r` would have its leading whitespace trimmed first
+  (still leaving `\r` at the end), then stripped — works. But a blank
+  line `\r` (CRLF on an otherwise-empty line) must be stripped BEFORE
+  the blank-line check `[[ -z "$line" ]]`, otherwise it's not recognized
+  as blank and falls through to the `*=` check, getting misreported as
+  "no '=' delimiter". Strip-first is the only correct ordering.
+
+- **T2.4 — diagnostic preview capped at 40 chars.** The new
+  `unterminated quote (raw: '${raw:0:40}')` and
+  `unexpected content after closing quote: '${tail:0:40}'` diagnostics
+  include a 40-char sanitized preview so users can SEE invisible bytes
+  (whitespace, CRLF, stray characters) without dumping a multi-KB value
+  into stderr. 40 chars is long enough to identify the offending bytes
+  in any realistic profile, short enough to keep the diagnostic on one
+  terminal line.
+
+- **T2.5 — parser/preflight failures DON'T trigger the cleanup trap.**
+  Initial reading of Bug B's spec suggested parser failures and
+  `require_cmd` failures were the trigger. Tracing the engine showed
+  `trap cleanup EXIT` is registered at line 235, AFTER the parser call
+  site (162) and the preflight block (47-61). So those early exits don't
+  run cleanup at all — they surface `_reject`'s stderr directly. The
+  real trigger for Bug B is failures BETWEEN trap registration (235) and
+  session end (289) where the current session has written INFO lines
+  but no ERROR yet — e.g. an xfreerdp3 startup failure, a hyprctl IPC
+  hiccup under `set -e`, a `compute_dpi_flags` edge case. The fix is
+  still correct and valuable for those scenarios; the spec wording at
+  archive should reflect the actual trigger window.
+
+- **T2.5 — SESSION_START marker MUST be the first log_event call.**
+  The marker is written at the top of the post-trap log block, before
+  the INICIO banner. Any failure AFTER this point has a bounded
+  "current session" window for awk to scan. The marker is unique per
+  PID (`pid=$$`) so concurrent sessions on the same profile (impossible
+  under flock but defensive against future refactors) can't
+  cross-pollinate. PID-prefix safety is handled by the awk regex
+  `"pid="pid"([^0-9]|$)"` — `pid=2222` does NOT match `pid=22222`
+  (verified in manual-verification Test 3).
+
+- **T2.5 — graceful degradation for legacy log files.** A LOG_FILE
+  written by a pre-T2.5 engine has no SESSION_START marker. The awk
+  pattern simply never enters `found` state, captures nothing, and
+  cleanup falls back to the generic `Ver log en $LOG_FILE` notify-send
+  message. This is correct behavior: surfacing NOTHING is better than
+  surfacing a stale cause. Verified in manual-verification Test 4.
+
+- **T2.5 — orchestrator's manual-verification steps were slightly off.**
+  The suggested sequence (`rdp-connect nonexistent` → `BADKEY=x` →
+  `rdp-connect testbadprofile`) doesn't actually trigger cleanup
+  (neither exit reaches the trap). Substituted a focused awk-logic
+  verification against a synthetic multi-session LOG_FILE — this
+  directly proves the fix without depending on engine state that
+  doesn't exercise the trap.
+
+### Bugfix-slice Accomplished
+
+- ✅ **T2.4** `fix(parser): tolerate trailing whitespace, CRLF, and inline comment after closing quote` @ `eace9b1`
+  - `lib/rdp-common.bash::parse_env_safe`:
+    - Added `line="${line%$'\r'}"` CRLF strip at the top of the read loop
+      (before any value inspection).
+    - Replaced the quoted-value branch: find the FIRST closing quote via
+      `${rest%%"$q"*}`, validate the tail (`${rest#*"$q"}`) against
+      `^[[:space:]]*(#.*)?$`, reject with `"unexpected content after
+      closing quote: '<40-char preview>'"` on violation.
+    - Improved the unterminated-quote diagnostic to include a 40-char
+      raw-value preview: `"unterminated quote (raw: '<preview>')"`.
+    - Doc comment updated to describe CRLF tolerance, tail validation,
+      and the new diagnostic format.
+  - `tests/parser-probe.sh`:
+    - Added `expect_rc_msg` helper that captures the child bash's stderr
+      (where `_reject` writes) and asserts both rc AND a stderr substring.
+    - Added 9 new fixtures (F15-F23): empty quoted value (regression),
+      CRLF after closing quote, trailing space, trailing tab, inline
+      comment after closing quote, garbage-rejected, unterminated+raw-
+      preview, quoted `=` signs (regression), quoted `#` interior
+      (regression).
+  - **Manual verification PASS**: bash -n clean (lib + tests); shellcheck
+    --severity=warning clean (lib + tests); parser-probe 24/24 (was 15,
+    +9 new); hidpi-probe 8/8 (regression); pid-path-probe 6/6
+    (regression).
+
+- ✅ **T2.5** `fix(cleanup): scope error diagnostic to current session, not stale log lines` @ `f4da861`
+  - `engine/rdp-connect`:
+    - Added `log_event "SESSION_START" "pid=$$ profile=$PROFILE"` as the
+      FIRST log line of the session (before the INICIO banner). The
+      marker is unique per PID so concurrent sessions on the same
+      profile can't cross-pollinate.
+    - Rewrote `cleanup()`'s error-line extractor from
+      `tail -n 15 | grep -iE error|failed|status|connect | tail -1`
+      to an `awk` one-liner that skips every line until THIS PID's
+      SESSION_START marker, then captures the last error-ish line in
+      the current session. Falls back to empty (→ generic
+      `Ver log en $LOG_FILE` notify-send) if no marker for our PID
+      exists.
+    - PID-prefix safety: the awk regex `"pid="pid"([^0-9]|$)"` ensures
+      `pid=2222` does NOT match `pid=22222`.
+  - **Manual verification PASS** (synthetic multi-session LOG_FILE):
+    - Test 1: current session has no ERROR line → awk returns empty
+      (old behavior would have leaked Session A's stale ERROR). PASS.
+    - Test 2: current session writes its own ERROR → awk returns
+      Session B's line; Session A NOT leaked. PASS.
+    - Test 3: PID-prefix safety: `pid=2222` does NOT match `pid=22222`
+      marker. PASS.
+    - Test 4: Legacy log file (no SESSION_START marker) → awk returns
+      empty (graceful degradation). PASS.
+  - bash -n clean (engine); shellcheck --severity=warning clean (engine).
+
+### Bugfix-slice TDD Cycle Evidence (Standard Mode — not applicable)
+
+Standard Mode (strict_tdd: false). No TDD cycle required. Each fix ends
+with shellcheck + bash -n + dedicated probe (T2.4) or focused
+scenario-verification matrix (T2.5). See "Bugfix-slice Accomplished"
+per-task entries for the manual-verification matrix.
+
+### Bugfix-slice Deviations from Design
+
+- **Spec gap (to be amended at archive)**: The robustness spec did not
+  codify (a) the parser's tolerance for trailing whitespace / CRLF /
+  inline comments after the closing quote, nor (b) the cleanup trap's
+  session-isolation requirement. Both behaviors are now implemented and
+  verified; the spec deltas will be written at archive time per the
+  orchestrator's note ("per spec robustness, not yet codified — amend
+  spec at archive time").
+
+- Otherwise: implementation matches the bug spec's reference skeletons
+  (parser: first-closing-quote search + tail regex; cleanup: SESSION_
+  START marker + awk bounded scan) with the deviations noted under
+  Bugfix-slice Discoveries.
+
+### Bugfix-slice Issues Found
+
+- See Bugfix-slice Discoveries section above. No blockers; both bugs
+  fixed and verified.
+
+### Updated Workload / PR Boundary
+
+- **Mode**: chained-PR slice (stacked-to-main). PR2 branch now has 6
+  commits (4 original + 2 bugfix). The 2 new commits add ~166 lines
+  (T2.4: +134; T2.5: +32) — well under the 400-line review budget for
+  a focused bugfix slice.
+- **PR2 total changed lines** (cumulative): ~691 (was ~525 + 166). The
+  bugfix slice is small enough to remain in the same PR2; no need to
+  split into a separate PR.
+
+### Updated Status
+
+**7/7 original tasks complete + 2 bugfix tasks (T2.4, T2.5) complete.**
+Ready for `/sdd-verify` for PR2 (now with bugfix slice included).

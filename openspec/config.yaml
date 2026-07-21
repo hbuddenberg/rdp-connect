@@ -1,0 +1,71 @@
+schema: spec-driven
+project: rdp-connect
+baseline_commit: ef04f56
+remote: https://github.com/hbuddenberg/rdp-connect
+
+persistence:
+  mode: openspec
+  engram_mirror: true
+  topic_key: sdd-init/rdp-connect
+
+context: |
+  Stack: Bash 5.3 (single-file installer that deploys a ~270-line engine script).
+  Runtime: GNU/Linux + Wayland/Hyprland, xfreerdp3, wofi|rofi, flock, jq, pipewire, notify-send, python3.
+  Architecture: profile-per-file env (~/.config/rdp/profiles/*.env); i18n dictionaries
+  (~/.config/rdp/i18n/{es,en}.env); installer/runtime split (install-rdp-framework.sh -> ~/.local/bin/rdp-connect).
+  Security: parse_env_safe (no `source` on profiles); password piped via stdin (/from-stdin:force) to hide from ps aux;
+  per-profile flock single-instance guard; pre-flight TCP probe on :3389; audit logs under ~/.local/state/rdp.
+  Style: XDG Base Directories; Spanish inline comments; UTF-8; chmod 600 (secrets) / 700 (dirs).
+
+strict_tdd: false
+
+testing:
+  runner: none
+  framework: none
+  static_analysis: "shellcheck (/usr/bin/shellcheck, installed)"
+  coverage: none
+  unit: none
+  integration: none
+  e2e: "manual (xfreerdp3 session against a real RDP host)"
+  recommendation: |
+    No bash test framework is installed (only shellcheck). To enable TDD later:
+    install bats-core (and optionally shunit2), add a tests/ dir, wire a `make test`
+    target, and extract pure functions (parse_env_safe, scale comparison, monitor flags)
+    into a sourcable library so they can be unit-tested without launching xfreerdp3.
+    Until then, every change MUST be manually verified via:
+      shellcheck install-rdp-framework.sh && bash -n install-rdp-framework.sh
+    plus a dry-run in a throwaway HOME (HOME=$(mktemp -d) ./install-rdp-framework.sh).
+
+rules:
+  proposal:
+    - "State blast radius: the deployed script runs as the user and handles real RDP credentials."
+    - "Include a rollback plan (the installer is idempotent; re-running it restores deployed files)."
+    - "Flag ANY change to the password path, stdin handling, or parse_env_safe as high-risk."
+  specs:
+    - "Use Given/When/Then scenarios."
+    - "Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)."
+    - "Every scenario MUST map to a manual verification step (no auto-runner yet)."
+  design:
+    - "Document parser/escape edge cases explicitly — this is the highest-risk area."
+    - "Note Hyprland / xfreerdp3 version assumptions and feature gates (e.g. /from-stdin:force)."
+    - "Prefer removing fragile deps (bc, python3) over adding them."
+  tasks:
+    - "Group by phase with hierarchical numbering."
+    - "Each task completable in one session; include a [ ] manual-verification checkbox per task."
+  apply:
+    tdd: false
+    test_command: "shellcheck install-rdp-framework.sh && bash -n install-rdp-framework.sh"
+    manual_check: "Re-run installer with HOME=$(mktemp -d); exercise the affected mode on a throwaway profile."
+  verify:
+    test_command: "shellcheck install-rdp-framework.sh"
+    build_command: "bash -n install-rdp-framework.sh"
+    coverage_threshold: 0
+  archive:
+    - "Warn before merging destructive deltas into openspec/specs/."
+    - "Keep archive/ as an audit trail — never delete or rewrite archived changes."
+
+delivery:
+  execution_mode: interactive
+  artifact_store: openspec
+  review_budget_lines: 400
+  chain_strategy: ask-on-trigger

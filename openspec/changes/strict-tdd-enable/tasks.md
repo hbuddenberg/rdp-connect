@@ -70,53 +70,47 @@ Flag stays `false`. Lands entry points PR2/PR3 plug into.
 
 **Ordering invariant**: T2.1 (trim extraction) is FIRST so T2.5 `vpn-trim.bats` calls the REAL `trim_profile_fields` — not a reimplementation. Kills the "approval test exercises copy, not production code" smell at migration time.
 
-- [ ] **T2.1** `refactor(engine): extract trim_profile_fields into lib/rdp-common.bash`
+- [x] **T2.1** `refactor(engine): extract trim_profile_fields into lib/rdp-common.bash`
   - Files: `lib/rdp-common.bash` (+`trim_profile_fields`), `engine/rdp-connect` (L174–181 loop → one-line `trim_profile_fields` call)
   - Deps: — · Size: ~25 · PR2 (FIRST commit)
   - `@test` added: none (pure behavior-preserving refactor; parity proven by still-passing probes + T2.5)
-  - [ ] manual-verification: byte-identical engine behavior; existing `vpn-trim-probe.sh` still passes against extracted fn
+  - [x] manual-verification: byte-identical engine behavior; existing `vpn-trim-probe.sh` still passes against extracted fn
 
-- [ ] **T2.2** `test(parser): migrate parser-probe.sh F1–F24 to tests/parser.bats`
+- [x] **T2.2** `test(parser): migrate parser-probe.sh F1–F24 to tests/parser.bats`
   - Files: `tests/parser.bats` (new)
   - Deps: T1.3 · Size: ~290 · PR2
   - `@test` added (24): F1–F24 `parse_env_safe` cases; F14 preserves child-bash `set -u` via `parse_env_safe_under_setu`
-  - [ ] manual-verification: mechanical 1:1 translation; `bats tests/parser.bats` mirrors probe rc/output
+  - [x] manual-verification: mechanical 1:1 translation; `bats tests/parser.bats` mirrors probe rc/output
 
-- [ ] **T2.3** `test(hidpi): migrate hidpi-probe.sh to tests/hidpi.bats`
+- [x] **T2.3** `test(hidpi): migrate hidpi-probe.sh to tests/hidpi.bats`
   - Files: `tests/hidpi.bats` (new)
   - Deps: T1.3 · Size: ~140 · PR2
   - `@test` added (8): `compute_dpi_flags` cases (mocks `hyprctl`/`id`; lib-boundary only)
 
-- [ ] **T2.4** `test(pid-path): migrate pid-path-probe.sh to tests/pid-path.bats`
+- [x] **T2.4** `test(pid-path): migrate pid-path-probe.sh to tests/pid-path.bats`
   - Files: `tests/pid-path.bats` (new)
   - Deps: T1.3 · Size: ~95 · PR2
   - `@test` added (6): `compute_pid_path` cases (mocks `id`)
 
-- [ ] **T2.5** `test(vpn-trim): migrate vpn-trim-probe.sh to tests/vpn-trim.bats using extracted trim_profile_fields`
+- [x] **T2.5** `test(vpn-trim): migrate vpn-trim-probe.sh to tests/vpn-trim.bats using extracted trim_profile_fields`
   - Files: `tests/vpn-trim.bats` (new), `tests/fixtures/vpn-trim/*.env` (8), `tests/fixtures/vpn-trim/__snapshots__/*.txt` (8)
   - Deps: **T2.1** (extracted fn), T1.3 · Size: ~155 · PR2
   - `@test` added (10): 8 fixture-driven `@test` + `trim_profile_fields_byte_identical_on_fixtures` + `trim_profile_fields_has_unit_coverage`
-  - [ ] manual-verification: "All 7 robustness scenarios have @test parity" (3 preflight-trim scenarios)
-  - [ ] manual-verification: "8 vpn-trim fixtures pass byte-identical pre/post extraction"
-  - [ ] manual-verification: "@test coverage for trim_profile_fields()"
+  - [x] manual-verification: "All 7 robustness scenarios have @test parity" (3 preflight-trim scenarios)
+  - [x] manual-verification: "8 vpn-trim fixtures pass byte-identical pre/post extraction"
+  - [x] manual-verification: "@test coverage for trim_profile_fields()"
 
-- [ ] **T2.6** `test(harness): add tests/harness.bats covering Makefile + CI scenarios`
+- [x] **T2.6** `test(harness): add tests/harness.bats covering Makefile + CI scenarios`
   - Files: `tests/harness.bats` (new)
   - Deps: T1.1, T1.2, T1.3 · Size: ~110 · PR2
-  - `@test` added (8): `make_test_passes_46_plus_cases`, `make_install_delegates_to_installer`, `make_verify_manifest_detects_tamper`, `make_lint_fails_on_shellcheck_warning`, `bats_minimum_version_enforced`, `setup_test_home_isolates_HOME`, `ci_workflow_well_formed`, `ci_workflow_uploads_logs_on_failure`
-  - [ ] manual-verification: "Fresh-clone `make test` passes 46+ cases"
-  - [ ] manual-verification: "`make install` delegates to the installer"
-  - [ ] manual-verification: "`make verify-manifest` catches a tampered deployment"
-  - [ ] manual-verification: "shellcheck warnings fail `make lint`"
-  - [ ] manual-verification: "bats < 1.5.0 fails with a clear message"
-  - [ ] manual-verification: "`setup_test_home` isolates `HOME`"
-  - [ ] manual-verification: "CI green on a healthy PR"
-  - [ ] manual-verification: "CI fails on a red test and uploads logs"
+  - `@test` added (9): 8 spec scenarios + `make_smoke_works` (NEW — W-5 fix regression backstop)
+  - [x] manual-verification: all 8 spec scenarios + W-5 backstop, 9/9 PASS
 
-- [ ] **T2.7** `chore(tests): delete legacy *.probe.sh scripts superseded by *.bats`
-  - Files: DELETE `tests/{parser,hidpi,pid-path,vpn-trim}-probe.sh`
+- [x] **T2.7** `chore(tests): delete legacy *.probe.sh scripts superseded by *.bats`
+  - Files: DELETE `tests/{parser,hidpi,pid-path,vpn-trim}-probe.sh`; Makefile lint glob narrowed `tests/*.sh tests/*.bash` → `tests/*.bash`
   - Deps: T2.2, T2.3, T2.4, T2.5 · Size: −530 · PR2
   - `@test` added: none (cleanup; `make test` is sole entry point)
+  - [x] manual-verification: `make ci` rc=0; 57/57 bats cases pass
 
 ## PR3 — session_error extraction + security boundary + flip (`pr3/extraction-flip`, ~200 LOC, Medium risk)
 

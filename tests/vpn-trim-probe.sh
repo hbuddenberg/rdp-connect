@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # tests/vpn-trim-probe.sh — T2.6 regression probe
 #
-# Validates that the engine's post-parse whitespace-trim block (engine/rdp-connect
-# right after parse_env_safe) handles the 5 VPN_CHECK shapes the bug surfaced:
+# Validates that the engine's post-parse whitespace-trim block handles the
+# 5 VPN_CHECK shapes the bug surfaced:
 #
 #   ""                   → trimmed empty → SKIP VPN preflight (correct)
 #   " "                  → trimmed empty → SKIP (was: ENTER + fail on </dev/tcp/ /3389>)
@@ -10,12 +10,34 @@
 #   "10.8.0.1"           → trimmed "10.8.0.1" → ENTER with clean host
 #   "  vpn.example.com " → trimmed "vpn.example.com" → ENTER with clean host
 #
-# The trim idiom under test (parameter-expansion only, no subshell, set -e safe):
-#   v="${v#"${v%%[![:space:]]*}"}"   # strip leading whitespace
-#   v="${v%"${v##*[![:space:]]}"}"   # strip trailing whitespace
+# T2.1 (extraction-before-migration rule): this probe now sources
+# lib/rdp-common.bash and calls the REAL trim_profile_fields on each fixture,
+# rather than reimplementing the trim inline. This kills the "approval test
+# exercises copy, not production code" smell flagged in explore F2 — the
+# 8/8 PASS below is a genuine regression check on the extracted fn, not a
+# tautology over a duplicate idiom.
 #
-# Engine-equivalent decision logic: after trim, [ -n "$v" ] decides ENTER vs SKIP.
+# Engine-equivalent decision logic: after trim, [ -n "$VPN_CHECK" ] decides
+# ENTER vs SKIP.
 set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+LIB="$SCRIPT_DIR/../lib/rdp-common.bash"
+# shellcheck source=/dev/null
+source "$LIB"
+
+# Caller contract for trim_profile_fields: ALL 5 trimmed globals MUST be set
+# before invocation (the engine pre-inits them to empty at engine L159-160
+# right before parse_env_safe). Under `set -u` the indirect read ${!_field}
+# raises "unbound variable" on a global that was never assigned — this is the
+# same contract the engine satisfies; the probe mirrors it. The 6 vars below
+# that the probe never reads directly ARE read indirectly by trim_profile_fields
+# (via ${!_field}); shellcheck can't see through indirect access, hence the
+# scoped SC2034 disable.
+# shellcheck disable=SC2034  # consumed indirectly by trim_profile_fields
+HOST="" USER_RDP="" PASS_RDP="" DOMAIN=""
+# shellcheck disable=SC2034  # consumed indirectly by trim_profile_fields
+VPN_CHECK="" PREFERRED_WS="" LANG_OVERRIDE=""
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -23,18 +45,19 @@ TOTAL=0
 
 color() { printf '\033[%sm%s\033[0m' "$1" "$2"; }
 
+# Each case sets the VPN_CHECK global, invokes trim_profile_fields (the
+# production fn), then asserts on the post-trim value of VPN_CHECK.
 expect_skip() {
     local label="$1" input="$2"
     TOTAL=$((TOTAL+1))
-    local v="$input"
-    v="${v#"${v%%[![:space:]]*}"}"
-    v="${v%"${v##*[![:space:]]}"}"
-    if [ -z "$v" ]; then
+    VPN_CHECK="$input"
+    trim_profile_fields
+    if [ -z "$VPN_CHECK" ]; then
         printf '  %s %s (input=[%s] trimmed=[])\n' "$(color 32 PASS)" "$label" "$input"
         PASS_COUNT=$((PASS_COUNT+1))
     else
         printf '  %s %s (input=[%s] trimmed=[%s] — expected SKIP, got ENTER)\n' \
-            "$(color 31 FAIL)" "$label" "$input" "$v"
+            "$(color 31 FAIL)" "$label" "$input" "$VPN_CHECK"
         FAIL_COUNT=$((FAIL_COUNT+1))
     fi
 }
@@ -42,16 +65,15 @@ expect_skip() {
 expect_enter_with() {
     local label="$1" input="$2" expected="$3"
     TOTAL=$((TOTAL+1))
-    local v="$input"
-    v="${v#"${v%%[![:space:]]*}"}"
-    v="${v%"${v##*[![:space:]]}"}"
-    if [ "$v" = "$expected" ]; then
+    VPN_CHECK="$input"
+    trim_profile_fields
+    if [ "$VPN_CHECK" = "$expected" ]; then
         printf '  %s %s (input=[%s] trimmed=[%s])\n' \
-            "$(color 32 PASS)" "$label" "$input" "$v"
+            "$(color 32 PASS)" "$label" "$input" "$VPN_CHECK"
         PASS_COUNT=$((PASS_COUNT+1))
     else
         printf '  %s %s (input=[%s] trimmed=[%s] expected=[%s])\n' \
-            "$(color 31 FAIL)" "$label" "$input" "$v" "$expected"
+            "$(color 31 FAIL)" "$label" "$input" "$VPN_CHECK" "$expected"
         FAIL_COUNT=$((FAIL_COUNT+1))
     fi
 }

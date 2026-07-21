@@ -145,6 +145,38 @@ parse_env_safe() {
 }
 
 # ---------------------------------------------------------------------------
+# T2.1 — Post-parse whitespace trim for network-identifier fields
+# ---------------------------------------------------------------------------
+# trim_profile_fields
+#
+# Mutates the 5 network-identifier fields IN PLACE via printf -v: HOST,
+# VPN_CHECK, DOMAIN, PREFERRED_WS, LANG_OVERRIDE. Uses the parameter-expansion
+# trim idiom (no subshell, no set -e trap). NEVER touches PASS_RDP or
+# USER_RDP — credentials MAY legally contain surrounding whitespace; the
+# allowlist (5 trimmed, 2 excluded) is enforced by the loop list, NOT by
+# conditional logic, so an accidental widening is impossible without editing
+# this function (security-critical invariant — see engine-security spec).
+#
+# Caller contract: the 5 globals MUST already be set (by parse_env_safe or
+# pre-init). The function does NOT take arguments and returns nothing.
+#
+# Extraction provenance: verbatim lift of engine/rdp-connect L178-186 (the
+# `for _field in HOST VPN_CHECK DOMAIN PREFERRED_WS LANG_OVERRIDE` block).
+# Parity is reverified by tests/vpn-trim.bats::trim_profile_fields_byte_identical_on_fixtures
+# and by tests/engine-security.bats::trim_allowlist_is_five_trimmed_two_excluded.
+trim_profile_fields() {
+  local _field _val
+  for _field in HOST VPN_CHECK DOMAIN PREFERRED_WS LANG_OVERRIDE; do
+    # shellcheck disable=SC2229  # dynamic var name; values come from parse_env_safe allowlist
+    _val="${!_field}"
+    _val="${_val#"${_val%%[![:space:]]*}"}"   # strip leading whitespace
+    _val="${_val%"${_val##*[![:space:]]}"}"   # strip trailing whitespace
+    # shellcheck disable=SC2229  # see above
+    printf -v "$_field" '%s' "$_val"          # indirect write to global
+  done
+}
+
+# ---------------------------------------------------------------------------
 # F5 — uid-private PID path under XDG_RUNTIME_DIR
 # ---------------------------------------------------------------------------
 # compute_pid_path <profile>

@@ -1,34 +1,51 @@
 # Tasks: baseline-hardening
 
-## Review Workload Forecast
+## Review Workload Forecast (final, post-archive)
 
 | Field | Value |
 |---|---|
-| Estimated changed lines | PR1 ≈ 710 / PR2 ≈ 255 (total ≈ 965) |
-| 400-line budget risk | **High** — PR1 over budget (see note) |
-| Chained PRs recommended | Yes |
-| Suggested split | PR1 security-core → PR2 robustness+installer (stacked-to-main) |
-| Delivery strategy | auto-chain (chained-PRs, user-locked) |
-| Chain strategy | stacked-to-main |
+| Actual changed lines (PR1) | 972 ins+del incl. T1.1 size:exception verbatim move (reviewable new logic ≈417) |
+| Actual changed lines (PR2) | 993 code+test (1,635 total incl. openspec docs) |
+| Final task count | 9 (T1.1–T1.4 PR1 + T2.1–T2.3 PR2 + T2.4–T2.6 PR2 bugfix slice) |
+| 400-line budget risk | **High** — both PRs over the per-PR budget; mitigated by chained-PR slice + T1.1 `size:exception` + bugfix slice inherently coupled to its parent PR |
+| Chained PRs used | Yes (2 PRs, stacked-to-main) |
+| Chain strategy | stacked-to-main (both PRs merged to main) |
+| Bugfix slice | T2.4 + T2.5 + T2.6 carried on `pr2/robustness-installer` (same branch, +166 LOC) |
 
-Decision needed before apply: Yes
-Chained PRs recommended: Yes
-Chain strategy: stacked-to-main
-400-line budget risk: High
+Decision needed before apply: Yes (resolved — chained-PRs, user-locked)
+Chained PRs recommended: Yes (delivered)
+Chain strategy: stacked-to-main (delivered)
+400-line budget risk: High (accepted via `size:exception` for T1.1 verbatim move; PR2 overage accepted as coupled-bugfix slice per orchestrator decision)
 
-> **PR1 budget note (evidence-based):** PR1 lands ~710 changed lines, but **~570 of those are a verbatim heredoc→file move** in T1.1 (engine ~211 LOC + i18n/template ~35 LOC extracted from `install-rdp-framework.sh:14-286`; no logic change — `diff` between old heredoc body and new file is empty). PR1's *reviewable new logic* (F3+F2+F5) is only ~140 LOC. The move cannot split cleanly → meets the chained-pr `size:exception` criterion ("generated/vendor/migration diff cannot split cleanly"). **Recommendation:** tag T1.1's commit with `size:exception` (pure extraction, verified by empty diff vs. old heredoc body); PR2 (~255) needs no exception.
+> **PR1 budget note (evidence-based):** PR1 landed ~710 changed lines, but
+> **~570 of those were a verbatim heredoc→file move** in T1.1 (engine ~211 LOC +
+> i18n/template ~35 LOC extracted from `install-rdp-framework.sh:14-286`; no
+> logic change — `diff` between old heredoc body and new file is empty). PR1's
+> *reviewable new logic* (F3+F2+F5) was only ~140 LOC. Tagged T1.1's commit with
+> `size:exception` (pure extraction, verified by empty diff vs. old heredoc body).
 
-### Suggested Work Units
+> **PR2 budget note (evidence-based):** PR2 landed 993 code+test lines (1,635
+> total incl. openspec docs). The overage is real: the cross-distro installer
+> (T2.3) is a new top-level deliverable; the bugfix slice (T2.4–T2.6) was
+> inherently coupled to the parser/cleanup code that landed in the same PR —
+> splitting would break TDD/verify coherence. Accepted via orchestrator
+> delivery decision rather than `size:exception` footer (per verify-report-pr2
+> open item 1).
 
-| Unit | Goal | PR | Base |
+### Work Units Delivered
+
+| Unit | Goal | PR | Status |
 |---|---|---|---|
-| T1.1 | Extract engine/lib/i18n/template to real files; installer copies them | PR1 | `main` |
-| T1.2 | F3 hardened `parse_env_safe` (allowlist + quote/comment) | PR1 | `pr1/security-core` |
-| T1.3 | F2 i18n via parser (no `source`) | PR1 | `pr1/security-core` |
-| T1.4 | F5 PID path under XDG_RUNTIME_DIR + EXIT-trap cleanup | PR1 | `pr1/security-core` |
-| T2.1 | F1 jq-native HiDPI math (DPI_FLAGS array) | PR2 | `main` (post-PR1) |
-| T2.2 | F4+F6+F7+F8+F9 strict mode + preflight + arrays + cleanup guard | PR2 | `pr2/robustness-installer` |
-| T2.3 | F10 cross-distro installer + smoke + checksum manifest | PR2 | `pr2/robustness-installer` |
+| T1.1 | Extract engine/lib/i18n/template to real files; installer copies them | PR1 | ✅ merged @ `fa2b10e` |
+| T1.2 | F3 hardened `parse_env_safe` (allowlist + quote/comment) | PR1 | ✅ merged @ `401a257` |
+| T1.3 | F2 i18n via parser (no `source`) | PR1 | ✅ merged @ `67c92a4` |
+| T1.4 | F5 PID path under XDG_RUNTIME_DIR + EXIT-trap cleanup | PR1 | ✅ merged @ `e0904be` |
+| T2.1 | F1 jq-native HiDPI math (DPI_FLAGS array) | PR2 | ✅ merged @ `6116413` |
+| T2.2 | F4+F6+F7+F8+F9 strict mode + preflight + arrays + cleanup guard | PR2 | ✅ merged @ `c88a0f5` |
+| T2.3 | F10 cross-distro installer + smoke + checksum manifest | PR2 | ✅ merged @ `9ef351f` |
+| T2.4 | Parser robustness: CRLF + trailing whitespace + tail validation (review bug A) | PR2 | ✅ merged @ `eace9b1` |
+| T2.5 | Cleanup SESSION_START marker for per-PID error extraction (review bug B) | PR2 | ✅ merged @ `f4da861` |
+| T2.6 | Preflight input normalization: trim whitespace (user report) | PR2 | ✅ merged @ `41735dd` |
 
 ## PR1 — security-core  (branch `pr1/security-core` ← `main`)
 
@@ -107,6 +124,46 @@ Chain strategy: stacked-to-main
   - [x] manual-verification: installer → **Smoke test failure aborts the installer** — PASS @ Probe 5 (syntax error → bash -n fails → exit 1)
   - [x] manual-verification: installer → **Manifest is generated and stable** — PASS @ Probe 4 (~/.local/state/rdp/manifest.sha256, LC_ALL=C sort, byte-identical across runs)
 
+## PR2 — bugfix slice  (continuation of `pr2/robustness-installer`)
+
+> Surfaced by post-PR2 review of the parser and the cleanup trap. Two of the
+> three were not codified in the original spec — both amended into the canonical
+> capabilities at archive (`engine-security` for parser robustness; `engine-robustness`
+> for cleanup session-isolation and VPN trim).
+
+- [x] **T2.4** `fix(parser): tolerate trailing whitespace, CRLF, and inline comment after closing quote` @ `eace9b1` — review-surfaced bug A
+  - Files: `lib/rdp-common.bash::parse_env_safe` (CRLF strip BEFORE blank-line/`*=` checks; first-closing-quote search via `${rest%%"$q"*}`; tail-validation regex `^[[:space:]]*(#.*)?$`; 40-char sanitized raw previews on rejection), `tests/parser-probe.sh` (+9 fixtures F15-F23 via new `expect_rc_msg` helper).
+  - Deps: T1.2 (parser exists). Size: +134.
+  - Spec amendment at archive: `engine-security` → `Quote and comment handling` requirement gains three new scenarios (CRLF tolerated, trailing whitespace after quote tolerated, garbage after closing quote rejected with raw preview).
+  - [x] manual-verification: engine-security → **Empty quoted value** — PASS @ F15 (VPN_CHECK="" → val=`<empty>`, rc=0)
+  - [x] manual-verification: engine-security → **CRLF after closing quote** — PASS @ F16 (HOST="srv"`\r` → val=`srv`, rc=0; no "unterminated quote")
+  - [x] manual-verification: engine-security → **Trailing space after closing quote** — PASS @ F17 (HOST="srv"` ` → val=`srv`)
+  - [x] manual-verification: engine-security → **Trailing tab after closing quote** — PASS @ F18 (HOST="srv"`\t` → val=`srv`)
+  - [x] manual-verification: engine-security → **Inline comment after closing quote** — PASS @ F19 (HOST="srv" # comment → val=`srv`)
+  - [x] manual-verification: engine-security → **Garbage after closing quote is rejected** — PASS @ F20 (HOST="srv"garbage → rc=1, msg `unexpected content after closing quote: 'garbage'` — caught a SECOND silent-corruption bug in the old `${raw:1:${#raw}-2}` slice)
+  - [x] manual-verification: engine-security → **Unterminated quote shows raw preview** — PASS @ F21 (HOST="srv → rc=1, msg `unterminated quote (raw: '...')`)
+  - [x] manual-verification: engine-security → **Quoted `=` signs preserved** — PASS @ F22 regression (PASS_RDP="secret=with=equals" → val=`secret=with=equals`)
+  - [x] manual-verification: engine-security → **Quoted `#` interior preserved** — PASS @ F23 regression (HOST="server # production" → val=`server # production`)
+
+- [x] **T2.5** `fix(cleanup): scope error diagnostic to current session, not stale log lines` @ `f4da861` — review-surfaced bug B
+  - Files: `engine/rdp-connect` (`log_event "SESSION_START" "pid=$$ profile=$PROFILE"` as FIRST log line after trap registration; `cleanup()` error-extractor rewritten from `tail -n 15 | grep` to `awk` bounded scan with PID-scoped marker regex `pid=<pid>([^0-9]|$)`).
+  - Deps: T2.2 (cleanup guard exists). Size: +32.
+  - Spec amendment at archive: `engine-robustness` gains a new requirement "Cleanup error diagnostic scoped to the current session" with four scenarios (current-session-only extraction, PID-prefix safety, no-error-returns-empty, legacy log degrades gracefully).
+  - [x] manual-verification: engine-robustness → **Current session with its own ERROR** — PASS @ Test 1 (returns Session B's line; Session A NOT leaked)
+  - [x] manual-verification: engine-robustness → **PID prefix safety** — PASS @ Test 3 (`pid=2222` does NOT match `pid=22222`)
+  - [x] manual-verification: engine-robustness → **Current session with NO ERROR returns empty** — PASS @ Test 1 baseline (no leak from previous sessions)
+  - [x] manual-verification: engine-robustness → **Legacy log without marker degrades gracefully** — PASS @ Test 4 (awk returns empty → generic notify-send fallback)
+
+- [x] **T2.6** `fix(vpn): trim whitespace from VPN_CHECK and HOST before TCP preflight` @ `41735dd` — user-reported bug
+  - Files: `engine/rdp-connect` (trim block at L174-181 over `HOST VPN_CHECK DOMAIN PREFERRED_WS LANG_OVERRIDE` — runs AFTER `parse_env_safe` L162 and BEFORE VPN preflight L292; `PASS_RDP`/`USER_RDP` deliberately NOT trimmed — passwords/identifiers MAY legally have surrounding spaces), `tests/vpn-trim-probe.sh` (8 cases: 4 expect-SKIP, 4 expect-ENTER-with-cleaned-host).
+  - Deps: T2.2 (`set -u` requires pre-initialized allowlisted keys). Size: ~50.
+  - Spec amendment at archive: `engine-robustness` gains a new requirement "Preflight input normalization" with three scenarios (VPN_CHECK whitespace-only trimmed, HOST surrounding-whitespace trimmed, PASS_RDP/USER_RDP NOT trimmed).
+  - Trigger: user bug report — *"VPN required when empty" + confusing "unterminated quote" on the same profile.* Root cause: `VPN_CHECK=" "` passed the `-n` non-empty test and produced a useless "VPN requerida ( )" message; the same Windows-edited profile also had CRLF on a quoted value (fixed by T2.4).
+  - [x] manual-verification: engine-robustness → **VPN_CHECK=" " trimmed → VPN preflight skipped** — PASS @ vpn-trim-probe (whitespace-only → empty → skip)
+  - [x] manual-verification: engine-robustness → **VPN_CHECK="  host  " trimmed → preflight uses cleaned host** — PASS @ vpn-trim-probe (trim → `host`)
+  - [x] manual-verification: engine-robustness → **HOST="  srv  " trimmed before TCP probe** — PASS @ vpn-trim-probe (trim → `srv`)
+  - [x] manual-verification: engine-robustness → **PASS_RDP and USER_RDP NOT trimmed** — PASS @ code inspection (trim loop body enumerates only the 5 non-credential fields; commit body documents the rationale)
+
 ## Ordering Constraints (verified)
 
 | Constraint | Status |
@@ -127,4 +184,11 @@ Each PR's diff is against the latest `main` at branch time (sequential merges to
 
 ## Next Step
 
-Run `sdd-apply` for **PR1 (security-core)** first. Resolve the T1.1 `size:exception` question (accept the pure-extraction move, or restructure) before apply begins.
+All 9 tasks complete (T1.1–T1.4 PR1 + T2.1–T2.3 PR2 + T2.4–T2.6 PR2 bugfix slice).
+Both PRs merged to main. Change archived to
+`openspec/changes/archive/baseline-hardening/`. Canonical capability specs
+synced under `openspec/specs/{engine-security,engine-robustness,hidpi-scaling,instance-locking,installer}/spec.md`.
+
+Recommended next change: tag release `v0.1.0`, then either (a) bats-core
+scaffolding for `strict_tdd: true` on the next change, or (b) a new feature
+change.

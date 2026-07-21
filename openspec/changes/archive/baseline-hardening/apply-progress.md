@@ -104,11 +104,15 @@ shellcheck + bash -n + dedicated probe + engine integration probe. See
 
 ## Remaining Tasks
 
-All 7 tasks complete. No remaining tasks for this change.
+All 9 tasks complete (T1.1–T1.4 PR1 + T2.1–T2.3 PR2 + T2.4–T2.6 PR2 bugfix
+slice). No remaining tasks for this change.
 
 - [x] **T2.1** `fix(hidpi): replace bc/python3 with jq-native scale math` — F1 (PR2) @ `6116413`
 - [x] **T2.2** `feat(robustness): strict mode, require_cmd, from-stdin gate, array flags, cleanup guard` — F4+F6+F7+F8+F9 (PR2) @ `c88a0f5`
 - [x] **T2.3** `feat(installer): cross-distro deterministic installer with smoke test and manifest` — F10 (PR2) @ `9ef351f`
+- [x] **T2.4** `fix(parser): tolerate trailing whitespace, CRLF, and inline comment after closing quote` (PR2 bugfix slice) @ `eace9b1`
+- [x] **T2.5** `fix(cleanup): scope error diagnostic to current session, not stale log lines` (PR2 bugfix slice) @ `f4da861`
+- [x] **T2.6** `fix(vpn): trim whitespace from VPN_CHECK and HOST before TCP preflight` (PR2 bugfix slice) @ `41735dd`
 
 ## Workload / PR Boundary
 
@@ -195,22 +199,25 @@ Standard Mode (strict_tdd: false). No TDD cycle required. Each task ends with sh
 
 ---
 
-## PR2 — bugfix slice (T2.4 + T2.5)
+## PR2 — bugfix slice (T2.4 + T2.5 + T2.6)
 
-> **Branch**: `pr2/robustness-installer` (continuation — same branch, 2 new
+> **Branch**: `pr2/robustness-installer` (continuation — same branch, 3 new
 > commits on top of the 4 from the original PR2 slice)
-> **Commits**: `eace9b1` (T2.4) → `f4da861` (T2.5)
+> **Commits**: `eace9b1` (T2.4) → `f4da861` (T2.5) → `41735dd` (T2.6)
 > **Mode**: Standard (strict_tdd: false — no test framework; shellcheck only).
 > Each fix ends with probe / scenario verification per the cached testing
 > capabilities.
-> **Scope**: Two bugs surfaced by post-PR2 review of the parser and the
-> cleanup trap. Neither was codified in the original spec — both will be
-> amended into the robustness spec at archive time (the parser robustness
-> scenarios and the cleanup session-isolation scenario).
+> **Scope**: Three bugs surfaced by post-PR2 review of the parser, the
+> cleanup trap, and a user report. The parser robustness scenarios and the
+> cleanup session-isolation requirement were not codified in the original
+> spec — both amended into the canonical `engine-security` and
+> `engine-robustness` capabilities at archive time. The T2.6 trim block was
+> also not in the original spec — amended into `engine-robustness` as the
+> "Preflight input normalization" requirement at archive time.
 
 ### Bugfix-slice Goal
 
-Close two review-surfaced bugs on the existing PR2 branch:
+Close three bugs on the existing PR2 branch:
 
 - **Bug A (parser)**: `parse_env_safe` misrejected legitimately-terminated
   quoted values that had trailing whitespace, CRLF, or an inline `# comment`
@@ -221,6 +228,12 @@ Close two review-surfaced bugs on the existing PR2 branch:
   sessions in the same per-profile LOG_FILE as the current session's failure
   cause, because `tail -n 15 | grep error` had no notion of where the current
   session's log lines started.
+- **Bug C (preflight — user report)**: `VPN_CHECK=" "` (whitespace-only)
+  passed the `-n` non-empty test, producing a useless "VPN requerida ( )"
+  message; the user saw "VPN required when empty" plus, on the same profile,
+  the confusing "unterminated quote" (the latter from Bug A on a different
+  field). Trailing-whitespace values on HOST/DOMAIN/PREFERRED_WS/LANG_OVERRIDE
+  also reached xfreerdp3 and the TCP probe untrimmed.
 
 ### Bugfix-slice Discoveries
 
@@ -300,6 +313,36 @@ Close two review-surfaced bugs on the existing PR2 branch:
   directly proves the fix without depending on engine state that
   doesn't exercise the trap.
 
+- **T2.6 — trim block placement is load-bearing.** The trim must run
+  AFTER `parse_env_safe` (so the parser sees the user's literal value,
+  including any quoting) and BEFORE every downstream preflight (TCP
+  probe at L292 for VPN_CHECK, host probe further down for HOST, the
+  workspace rule for PREFERRED_WS, the i18n load for LANG_OVERRIDE).
+  Placing the trim BEFORE parse would require teaching the parser about
+  pre-trimmed values (entangling F3 with T2.6); placing it AFTER any
+  preflight would let whitespace-bearing values reach the network layer
+  (the original bug). Engine L162 (parse) → L174-181 (trim) → L292
+  (VPN preflight) is the only correct ordering.
+
+- **T2.6 — PASS_RDP and USER_RDP intentionally NOT trimmed.** Passwords
+  and user identifiers MAY legally contain surrounding whitespace
+  (rare but valid for some IdP password schemes; some users paste from
+  password managers that include trailing newlines turned into spaces
+  by editors). Silently trimming would corrupt credentials and produce
+  "auth failed" errors with no visible cause. The trim loop body
+  enumerates ONLY the 5 non-credential fields (`HOST VPN_CHECK DOMAIN
+  PREFERRED_WS LANG_OVERRIDE`). Documented in the commit body and in
+  an inline comment at engine L170-171.
+
+- **T2.6 — Bug A and Bug C were the same user report.** The user
+  reported "VPN required when empty" + "unterminated quote" on the same
+  profile. Investigation found three failure modes: (1) `VPN_CHECK=" "`
+  whitespace-only passing `-n` (Bug C); (2) `HOST="srv"` with CRLF on
+  the closing quote misreported as unterminated (Bug A); (3) trailing
+  whitespace on HOST producing a TCP probe against a hostname with a
+  trailing space (Bug C, second symptom). T2.4 closed (2); T2.6 closed
+  (1) and (3).
+
 ### Bugfix-slice Accomplished
 
 - ✅ **T2.4** `fix(parser): tolerate trailing whitespace, CRLF, and inline comment after closing quote` @ `eace9b1`
@@ -353,6 +396,32 @@ Close two review-surfaced bugs on the existing PR2 branch:
       empty (graceful degradation). PASS.
   - bash -n clean (engine); shellcheck --severity=warning clean (engine).
 
+- ✅ **T2.6** `fix(vpn): trim whitespace from VPN_CHECK and HOST before TCP preflight` @ `41735dd`
+  - `engine/rdp-connect`:
+    - Added the trim block at L174-181. The loop body enumerates
+      exactly five fields — `HOST VPN_CHECK DOMAIN PREFERRED_WS
+      LANG_OVERRIDE` — and applies bash parameter expansion
+      (`printf -v "$_field" '%s' "${!_field#"${!_field%%[![:space:]]*}"}"`
+      then trailing-whitespace strip) to each. `PASS_RDP` and
+      `USER_RDP` are deliberately excluded (see Discoveries).
+    - Block placement: AFTER `parse_env_safe` at L162 and BEFORE the
+      VPN preflight at L292 (and before the HOST TCP probe, the
+      PREFERRED_WS workspace rule, and the LANG_OVERRIDE load).
+    - Inline comment at L170-171 documents the PASS_RDP/USER_RDP
+      exclusion rationale.
+  - `tests/vpn-trim-probe.sh` (8 cases): 4 expect-SKIP scenarios
+    (empty VPN_CHECK, whitespace-only VPN_CHECK, tab-only VPN_CHECK,
+    unset VPN_CHECK under `set -u` with default) + 4 expect-ENTER
+    scenarios (cleaned trailing-space host, cleaned leading-space host,
+    cleaned surrounding-space VPN_CHECK, cleaned mixed-whitespace
+    DOMAIN/PREFERRED_WS).
+  - **Manual verification PASS**: bash -n clean (engine + tests);
+    shellcheck --severity=warning clean (engine + tests); vpn-trim-probe
+    8/8; parser-probe 24/24 (regression); hidpi-probe 8/8 (regression);
+    pid-path-probe 6/6 (regression). Engine integration: profile with
+    `VPN_CHECK=" "` now skips VPN preflight (logs no "VPN requerida"
+    line) and proceeds to host preflight.
+
 ### Bugfix-slice TDD Cycle Evidence (Standard Mode — not applicable)
 
 Standard Mode (strict_tdd: false). No TDD cycle required. Each fix ends
@@ -362,35 +431,42 @@ per-task entries for the manual-verification matrix.
 
 ### Bugfix-slice Deviations from Design
 
-- **Spec gap (to be amended at archive)**: The robustness spec did not
+- **Spec gap (closed at archive)**: The robustness spec did not
   codify (a) the parser's tolerance for trailing whitespace / CRLF /
   inline comments after the closing quote, nor (b) the cleanup trap's
-  session-isolation requirement. Both behaviors are now implemented and
-  verified; the spec deltas will be written at archive time per the
-  orchestrator's note ("per spec robustness, not yet codified — amend
-  spec at archive time").
+  session-isolation requirement, nor (c) the preflight input
+  normalization requirement. All three behaviors are now implemented
+  and verified; the canonical `engine-security` and `engine-robustness`
+  capability specs (synced at archive) reflect them.
 
 - Otherwise: implementation matches the bug spec's reference skeletons
   (parser: first-closing-quote search + tail regex; cleanup: SESSION_
-  START marker + awk bounded scan) with the deviations noted under
-  Bugfix-slice Discoveries.
+  START marker + awk bounded scan; preflight: bash parameter-expansion
+  trim loop over an enumerated field list) with the deviations noted
+  under Bugfix-slice Discoveries.
 
 ### Bugfix-slice Issues Found
 
-- See Bugfix-slice Discoveries section above. No blockers; both bugs
-  fixed and verified.
+- See Bugfix-slice Discoveries section above. No blockers; all three
+  bugs fixed and verified.
 
 ### Updated Workload / PR Boundary
 
-- **Mode**: chained-PR slice (stacked-to-main). PR2 branch now has 6
-  commits (4 original + 2 bugfix). The 2 new commits add ~166 lines
-  (T2.4: +134; T2.5: +32) — well under the 400-line review budget for
-  a focused bugfix slice.
-- **PR2 total changed lines** (cumulative): ~691 (was ~525 + 166). The
-  bugfix slice is small enough to remain in the same PR2; no need to
-  split into a separate PR.
+- **Mode**: chained-PR slice (stacked-to-main). PR2 branch has 7
+  commits (4 original + 3 bugfix). The 3 new commits add ~216 lines
+  (T2.4: +134; T2.5: +32; T2.6: ~50) — under the 400-line review
+  budget for a focused bugfix slice on its own, but the slice rode
+  on the same PR2 branch as T2.1-T2.3 (see PR2 verify report for the
+  delivery decision).
+- **PR2 total changed lines** (cumulative): ~1,209 (was ~525 + 216 +
+  openspec docs). The bugfix slice is small enough on its own; riding
+  it on PR2 was an explicit orchestrator decision because the bugs
+  were surfaced by PR2 review and the parser/cleanup code that
+  exhibited them is the same code that PR2 introduced.
 
 ### Updated Status
 
-**7/7 original tasks complete + 2 bugfix tasks (T2.4, T2.5) complete.**
-Ready for `/sdd-verify` for PR2 (now with bugfix slice included).
+**7/7 original tasks complete + 3 bugfix tasks (T2.4, T2.5, T2.6)
+complete. Both PRs merged to main. Change archived to
+`openspec/changes/archive/baseline-hardening/`. Canonical capability
+specs synced to `openspec/specs/`.**

@@ -105,14 +105,17 @@ parse_env_safe() {
 }
 
 # ---------------------------------------------------------------------------
-# F5 — uid-private PID path (implementation lands in T1.4)
+# F5 — uid-private PID path under XDG_RUNTIME_DIR
 # ---------------------------------------------------------------------------
 # compute_pid_path <profile>
 #
-# T1.1 STUB: returns 0 without printing a path. The T1.1 engine still hard-
-# codes PID_FILE="/tmp/rdp-${PROFILE}.pid" (the verbatim heredoc body) and
-# does not yet call this function. The XDG_RUNTIME_DIR + uid-suffix logic is
-# implemented in T1.4 per design.md (PID path decision section).
+# Returns the per-profile, uid-private lockfile path. Resolves to
+#   /run/user/<uid>/rdp-<profile>-<uid>.pid   when XDG_RUNTIME_DIR is set
+#   /tmp/rdp-<profile>-<uid>.pid              on the fallback (uid suffix
+#                                              STILL present so two users on
+#                                              the same host cannot collide).
+# XDG_RUNTIME_DIR is 0700 and per-user on systemd distros; using it removes
+# the symlink/DoS vector the legacy /tmp/rdp-<profile>.pid path exposed.
 compute_pid_path() {
-  return 0
+  printf '%s/rdp-%s-%s.pid' "${XDG_RUNTIME_DIR:-/tmp}" "$1" "$(id -u)"
 }

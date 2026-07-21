@@ -106,7 +106,10 @@ parse_env_safe "$ENV_FILE" profile || {
 
 WM_CLASS="rdp-${PROFILE}"
 LOG_FILE="$LOG_DIR/${PROFILE}.log"
-PID_FILE="/tmp/rdp-${PROFILE}.pid"
+# T1.4 (F5): uid-private PID path under XDG_RUNTIME_DIR (or /tmp fallback with
+# uid suffix). Eliminates the world-writable /tmp/rdp-<profile>.pid symlink/DoS
+# vector — two users on the same host can no longer collide or interfere.
+PID_FILE="$(compute_pid_path "$PROFILE")"
 START_TIME=$(date +%s)
 
 log_event() {
@@ -114,13 +117,20 @@ log_event() {
 }
 
 # --- SINGLE INSTANCE GUARD (Flock exclusivo por perfil) ---
+# flock is process-bound: a crashed peer's lock is released by the kernel,
+# so our flock -n succeeds and we overwrite the stale PID content below
+# (stale-lock reclamation is automatic). A live peer holds the fd → flock -n
+# fails → we focus the existing window and exit 0 (peer-honored).
 exec 200>"$PID_FILE"
 if ! flock -n 200; then
-    log_event "WARN" "Instancia activa detectada mediante PID lock. Enfocando ventana..."
+    # shellcheck disable=SC2188  # $(<file) is the bash no-fork file-read idiom; 2>/dev/null + || true handle missing/unreadable files (peer holds lock but file content may be empty if peer crashed before writing)
+    _peer=$(<"$PID_FILE" 2>/dev/null || true)
+    log_event "WARN" "Instancia activa pid=${_peer:-?} detectada. Enfocando ventana..."
     notify-send -i display "RDP $PROFILE" "$MSG_ALREADY_ACTIVE"
-    hyprctl dispatch focuswindow "class:^($WM_CLASS)$"
+    hyprctl dispatch focuswindow "class:^($WM_CLASS)$" || true
     exit 0
 fi
+echo "$$" >&200
 
 # --- CLEANUP TRAP & DIAGNÓSTICO ---
 cleanup() {
@@ -137,7 +147,13 @@ cleanup() {
         log_event "INFO" "Sesión finalizada correctamente. Duración total: ${DURATION}s."
         notify-send -i display-off "RDP $PROFILE" "$MSG_SESSION_ENDED"
     fi
-    rm -f "$PID_FILE"
+    # T1.4 (F5): remove the uid-private PID file at the NEW path on every exit.
+    # The `[ -f ]` guard tolerates early-exit-before-flock (when the file was
+    # never created) per the instance-locking "Early-exit before flock does
+    # not error" scenario. Belt-and-suspenders with rm -f; explicit per the
+    # T1.4 design note (this guard is self-contained here for F5; F9's
+    # LOG_FILE guard rides in T2.2 where `set -e` makes it load-bearing).
+    [ -f "$PID_FILE" ] && rm -f "$PID_FILE"
 }
 trap cleanup EXIT
 

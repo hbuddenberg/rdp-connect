@@ -1,9 +1,11 @@
 # rdp-connect
 
-![status](https://img.shields.io/badge/status-baseline--hardened-brightgreen)
-![capabilities](https://img.shields.io/badge/capabilities-5-blue)
-![distros](https://img.shields.io/badge/distros-Arch%20%E2%9C%93%20%7C%20Debian%20%E2%9C%93%20%7C%20Fedora%20%E2%9C%93%20%7C%20Alpine%20%E2%9C%97-orange)
+![status](https://img.shields.io/badge/status-strict--tdd--active-brightgreen)
+![strict_tdd](https://img.shields.io/badge/strict__tdd-true-brightgreen)
+![CI](https://github.com/hbuddenberg/rdp-connect/actions/workflows/test.yml/badge.svg)
 ![tests](https://img.shields.io/badge/tests-66%20bats%20cases%20(7%20files)-brightgreen)
+![capabilities](https://img.shields.io/badge/capabilities-6-blue)
+![distros](https://img.shields.io/badge/distros-Arch%20%E2%9C%93%20%7C%20Debian%20%E2%9C%93%20%7C%20Fedora%20%E2%9C%93%20%7C%20Alpine%20%E2%9C%97-orange)
 ![spec](https://img.shields.io/badge/spec-driven-openspec-blueviolet)
 
 RDP connection framework for Hyprland/Wayland built on `xfreerdp3`.
@@ -17,6 +19,7 @@ RDP connection framework for Hyprland/Wayland built on `xfreerdp3`.
 | `hidpi-scaling` | Pure-bash + jq HiDPI math — no `bc`/`python3` deps; safe fallback when scale is unparsable |
 | `instance-locking` | uid-private PID path under `${XDG_RUNTIME_DIR:-/tmp}`; stale-lock reclamation via `flock`; EXIT-trap cleanup |
 | `installer` | Cross-distro deterministic deployment — `/etc/os-release` detection (pacman→dnf→apt), idempotent `install -D`, post-install smoke test, SHA-256 manifest |
+| `test-harness` | bats-core suite (66 `@test` blocks across 7 files) + `make {test,lint,ci,smoke,verify-manifest}` + GitHub Actions CI; enforces `strict_tdd: true` at the unit level |
 
 Canonical contracts live at **[`openspec/specs/`](openspec/specs/)** — one directory per capability, each with a `spec.md` containing the normative requirements and Given/When/Then scenarios.
 
@@ -165,7 +168,7 @@ The smoke target works on a host without `xfreerdp3` / `hyprctl` because `rdp-co
 
 ### SDD context
 
-This test harness was built under the `strict-tdd-enable` change. See **[`openspec/changes/strict-tdd-enable/`](openspec/changes/strict-tdd-enable/)** for the proposal, design, and task breakdown. PR1 landed the tooling (Makefile + CI + helper + this README section); PR2 migrated the 46 probe scenarios to `*.bats`; PR3 extracted two more pure functions from the engine (`trim_profile_fields`, `extract_session_error`), added the cleanup-session + engine-security bats coverage those extractions unlock, and flipped `strict_tdd: true` — every future SDD change now follows the red-green-refactor cycle at the unit level.
+This test harness was built under the `strict-tdd-enable` change (archived — see **[`openspec/changes/archive/strict-tdd-enable/`](openspec/changes/archive/strict-tdd-enable/)** for the proposal, design, and task breakdown). PR1 landed the tooling (Makefile + CI + helper + this README section); PR2 migrated the 46 probe scenarios to `*.bats`; PR3 extracted two more pure functions from the engine (`trim_profile_fields`, `extract_session_error`), added the cleanup-session + engine-security bats coverage those extractions unlock, and flipped `strict_tdd: true` — every future SDD change now follows the red-green-refactor cycle at the unit level. The canonical contract for this capability lives at **[`openspec/specs/test-harness/spec.md`](openspec/specs/test-harness/spec.md)**.
 
 Current suite: **66 bats cases across 7 files** (parser 24 + hidpi 8 + pid-path 6 + vpn-trim 10 + harness 10 + cleanup-session 6 + engine-security 2).
 

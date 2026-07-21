@@ -1,5 +1,6 @@
 # Makefile — rdp-connect entry points
-# Spec: openspec/changes/strict-tdd-enable/specs/test-harness-delta.md
+# Spec: openspec/specs/test-harness/spec.md (canonical; promoted from the
+# strict-tdd-enable delta at archive)
 #
 # Canonical entry points for tests, lint, install, smoke, and tamper
 # verification. CI runs `make ci` (= `lint test`). The strict-tdd-enable change
@@ -67,11 +68,11 @@ smoke: install
 # Tamper detection. Reads the installer-written SHA-256 manifest and fails
 # naming any deployed file whose checksum no longer matches.
 #
-# NOTE: the spec test-harness-delta.md says ~/.local/share/rdp/MANIFEST.sha256
-# (uppercase) — that is a SPEC BUG (open question Q1 in design.md). The
-# installer (install-rdp-framework.sh:219) is the source of truth and writes
-# ~/.local/state/rdp/manifest.sha256 (lowercase). This target matches the
-# installer; the spec should be amended before sdd-verify.
+# Path: ~/.local/state/rdp/manifest.sha256 (XDG state/, lowercase). Matches the
+# installer (install-rdp-framework.sh:219), bootstrap.sh:85, and the canonical
+# test-harness spec. (Carry-forward Q1 from strict-tdd-enable was resolved at
+# archive: the delta originally said ~/.local/share/rdp/MANIFEST.sha256 — a spec
+# bug; amended to match this implementation.)
 verify-manifest:
 	@if [ ! -f "$$HOME/.local/state/rdp/manifest.sha256" ]; then \
 		echo "manifest not found at $$HOME/.local/state/rdp/manifest.sha256 — run 'make install' first"; \

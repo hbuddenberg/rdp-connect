@@ -1,7 +1,8 @@
 # shellcheck shell=bash
 # tests/test_helper.bash — sourced by every tests/*.bats
 #
-# Spec: openspec/changes/strict-tdd-enable/specs/test-harness-delta.md
+# Spec: openspec/specs/test-harness/spec.md (canonical; promoted from the
+# strict-tdd-enable delta at archive)
 # Requirement: Shared test helper (tests/test_helper.bash)
 #
 # Provides:

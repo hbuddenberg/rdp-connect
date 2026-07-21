@@ -116,34 +116,34 @@ Flag stays `false`. Lands entry points PR2/PR3 plug into.
 
 **Ordering invariant**: extractions (T3.1) BEFORE flip (T3.4), so strict_tdd activates against extracted code. Flip is LAST = canary.
 
-- [ ] **T3.1** `refactor(engine): extract extract_session_error into lib/rdp-common.bash`
+- [x] **T3.1** `refactor(engine): extract extract_session_error into lib/rdp-common.bash`
   - Files: `lib/rdp-common.bash` (+`extract_session_error`), `engine/rdp-connect` (cleanup() L247–254 → delegate; drop statically-true `[ -n START_TIME ]` guard)
   - Deps: — · Size: ~30 · PR3
   - `@test` added: none (parity in T3.2)
-  - [ ] manual-verification: `cleanup()` produces identical `LAST_ERROR` on the 4 multi-session fixtures
+  - [x] manual-verification: `cleanup()` produces identical `LAST_ERROR` on the 4 multi-session fixtures
 
-- [ ] **T3.2** `test(cleanup-session): add tests/cleanup-session.bats + fixtures for extract_session_error`
+- [x] **T3.2** `test(cleanup-session): add tests/cleanup-session.bats + fixtures for extract_session_error`
   - Files: `tests/cleanup-session.bats` (new), `tests/fixtures/cleanup-session/*.log` (4) + snapshots
   - Deps: T3.1 · Size: ~130 · PR3
   - `@test` added (6): 4 fixture-driven `@test` (stale ERROR, PID prefix collision 2222 vs 22222, no-ERROR, legacy no-SESSION_START) + `extract_session_error_byte_identical_on_fixtures` + `extract_session_error_has_unit_coverage`
-  - [ ] manual-verification: "All 7 robustness scenarios have @test parity" (4 cleanup-session scenarios)
-  - [ ] manual-verification: "Multi-session `LOG_FILE` fixtures match pre-extraction output"
-  - [ ] manual-verification: "@test coverage for `extract_session_error()`"
+  - [x] manual-verification: "All 7 robustness scenarios have @test parity" (4 cleanup-session scenarios)
+  - [x] manual-verification: "Multi-session `LOG_FILE` fixtures match pre-extraction output"
+  - [x] manual-verification: "@test coverage for `extract_session_error()`"
 
-- [ ] **T3.3** `test(engine-security): add tests/engine-security.bats for trim allowlist + call-site boundary`
+- [x] **T3.3** `test(engine-security): add tests/engine-security.bats for trim allowlist + call-site boundary`
   - Files: `tests/engine-security.bats` (new)
   - Deps: T2.1 (satisfied via PR2 merge) · Size: ~80 · PR3
   - `@test` added (2): `engine_calls_trim_profile_fields_not_inline`, `trim_allowlist_is_five_trimmed_two_excluded`
-  - [ ] manual-verification: "Parser consumers call `trim_profile_fields()`, not inline trim"
-  - [ ] manual-verification: "`trim_profile_fields()` allowlist is the documented 5 trimmed + 2 excluded"
+  - [x] manual-verification: "Parser consumers call `trim_profile_fields()`, not inline trim"
+  - [x] manual-verification: "`trim_profile_fields()` allowlist is the documented 5 trimmed + 2 excluded"
 
-- [ ] **T3.4** `chore(openspec): flip strict_tdd true and wire testing.* block to bats`  ← CANARY
-  - Files: `openspec/config.yaml` (L20 `strict_tdd: true`, L56 `rules.apply.tdd: true`, `testing.runner/framework/unit` → `bats`/`bats-core`)
+- [x] **T3.4** `chore(openspec): flip strict_tdd true and wire testing.* block to bats`  ← CANARY
+  - Files: `openspec/config.yaml` (L20 `strict_tdd: true`, L68 `rules.apply.tdd: true`, `testing.runner/framework/unit` → `bats`/`bats-core`)
   - Deps: T2.6, T3.2, T3.3 (all bats green before flip) · Size: ~20 · PR3
-  - `@test` added: none (config change)
-  - [ ] manual-verification: `grep -c '^strict_tdd: true' openspec/config.yaml` = 1 **AND** `grep -c 'tdd: true' openspec/config.yaml` ≥ 1 (R6 two-key flip canary — silent no-op if only one flips)
+  - `@test` added: 1 canary (`harness.bats::both_strict_tdd_keys_flipped`)
+  - [x] manual-verification: `grep -c '^strict_tdd: true' openspec/config.yaml` = 1 **AND** `grep -c 'tdd: true' openspec/config.yaml` ≥ 1 (R6 two-key flip canary — silent no-op if only one flips)
 
-- [ ] **T3.5** `docs(readme): add bats test-count badge`
+- [x] **T3.5** `docs(readme): add bats test-count badge`
   - Files: `README.md`
   - Deps: T3.4 (count final post-flip) · Size: ~10 · PR3
   - `@test` added: none
@@ -167,7 +167,7 @@ Flag stays `false`. Lands entry points PR2/PR3 plug into.
 | PR2 | hidpi.bats | 8 |
 | PR2 | pid-path.bats | 6 |
 | PR2 | vpn-trim.bats | 10 |
-| PR2 | harness.bats | 8 |
+| PR2 | harness.bats | 9 (+1 canary added by PR3 T3.4 = 10 final) |
 | PR3 | cleanup-session.bats | 6 |
 | PR3 | engine-security.bats | 2 |
-| **Total** | | **64** |
+| **Total post-PR3** | | **66** |

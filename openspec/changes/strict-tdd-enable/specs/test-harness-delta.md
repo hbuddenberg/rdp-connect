@@ -15,7 +15,7 @@ warning; `install` MUST delegate to `install-rdp-framework.sh` with no other
 side effect; `smoke` MUST run the post-install smoke sequence (throwaway
 `HOME`, then an engine invocation proving the binary is on `PATH` and parses);
 `verify-manifest` MUST run `sha256sum -c` on
-`~/.local/share/rdp/MANIFEST.sha256` and exit non-zero on any mismatch.
+`~/.local/state/rdp/manifest.sha256` and exit non-zero on any mismatch.
 
 #### Scenario: Fresh-clone `make test` passes 46+ cases
 
@@ -34,7 +34,7 @@ side effect; `smoke` MUST run the post-install smoke sequence (throwaway
 
 #### Scenario: `make verify-manifest` catches a tampered deployment
 
-- GIVEN a deployed `~/.local/share/rdp/MANIFEST.sha256`
+- GIVEN a deployed `~/.local/state/rdp/manifest.sha256`
 - WHEN one deployed file is modified and `make verify-manifest` runs
 - THEN the target exits non-zero naming the tampered file
 - AND (@test `harness.bats::make_verify_manifest_detects_tamper`: deploy to `setup_test_home`, mutate one file, assert non-zero exit)
@@ -73,7 +73,7 @@ to it, and returns the path (no test MUST touch the real `HOME`); provide
 
 The CI workflow MUST trigger on `push` AND `pull_request` against `main`, run
 on `ubuntu-latest`, install `bats-core` via `apt-get install -y bats`, run
-`make test` then `make lint` in that order, and upload the `tests/` log
+`make lint` then `make test` in that order (matching `make ci`), and upload the `tests/` log
 artifact on failure via `actions/upload-artifact`.
 
 #### Scenario: CI green on a healthy PR

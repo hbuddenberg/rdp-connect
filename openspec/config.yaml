@@ -24,7 +24,7 @@ testing:
   framework: bats-core
   static_analysis: "shellcheck (/usr/bin/shellcheck, installed)"
   coverage: "n/a (bash has no line-coverage collector; scenario-coverage is the proxy — see test-harness-delta spec)"
-  unit: "bats tests/ (65 @test blocks across 7 .bats files post-PR3)"
+  unit: "bats tests/ (66 @test blocks across 7 .bats files post-PR3; canary @test in harness.bats bumped the count from 65)"
   integration: "manual (engine integration via `make smoke`; real xfreerdp3/hyprctl/jq/flock/notify-send required)"
   e2e: "manual (xfreerdp3 session against a real RDP host)"
   recommendation: |

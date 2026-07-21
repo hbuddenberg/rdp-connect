@@ -3,7 +3,7 @@
 ![status](https://img.shields.io/badge/status-strict--tdd--active-brightgreen)
 ![strict_tdd](https://img.shields.io/badge/strict__tdd-true-brightgreen)
 ![CI](https://github.com/hbuddenberg/rdp-connect/actions/workflows/test.yml/badge.svg)
-![tests](https://img.shields.io/badge/tests-66%20bats%20cases%20(7%20files)-brightgreen)
+![tests](https://img.shields.io/badge/tests-74%20bats%20cases%20(8%20files)-brightgreen)
 ![capabilities](https://img.shields.io/badge/capabilities-6-blue)
 ![distros](https://img.shields.io/badge/distros-Arch%20%E2%9C%93%20%7C%20Debian%20%E2%9C%93%20%7C%20Fedora%20%E2%9C%93%20%7C%20Alpine%20%E2%9C%97-orange)
 ![spec](https://img.shields.io/badge/spec-driven-openspec-blueviolet)
@@ -15,11 +15,11 @@ RDP connection framework for Hyprland/Wayland built on `xfreerdp3`.
 | Capability | What it guarantees |
 |---|---|
 | `engine-security` | Hardened env parser (`parse_env_safe`) — allowlist + quote/comment handling, no `source`/`eval`, CRLF/whitespace tolerance, raw-preview diagnostics |
-| `engine-robustness` | Strict mode (`set -euo pipefail`), `require_cmd` preflight, `/from-stdin:force` build gate, array-based flag expansion, cleanup LOG_FILE guard, per-PID error diagnostics, preflight input trimming |
+| `engine-robustness` | Strict mode (`set -euo pipefail`), `require_cmd` preflight, `/from-stdin:force` build gate, array-based flag expansion, cleanup LOG_FILE guard, per-PID error diagnostics, preflight input trimming, **process-group isolation + trap-kill reaps `xfreerdp3` on signal-induced exit (R7/orphan-kill fix)** |
 | `hidpi-scaling` | Pure-bash + jq HiDPI math — no `bc`/`python3` deps; safe fallback when scale is unparsable |
-| `instance-locking` | uid-private PID path under `${XDG_RUNTIME_DIR:-/tmp}`; stale-lock reclamation via `flock`; EXIT-trap cleanup |
+| `instance-locking` | uid-private PID path under `${XDG_RUNTIME_DIR:-/tmp}`; stale-lock reclamation via `flock`; **path persists after exit (R7 fix) — kernel releases flock on fd close, next start reclaims via `flock -n`** |
 | `installer` | Cross-distro deterministic deployment — `/etc/os-release` detection (pacman→dnf→apt), idempotent `install -D`, post-install smoke test, SHA-256 manifest |
-| `test-harness` | bats-core suite (66 `@test` blocks across 7 files) + `make {test,lint,ci,smoke,verify-manifest}` + GitHub Actions CI; enforces `strict_tdd: true` at the unit level |
+| `test-harness` | bats-core suite (74 `@test` blocks across 8 files) + `make {test,lint,ci,smoke,verify-manifest}` + GitHub Actions CI; enforces `strict_tdd: true` at the unit level |
 
 Canonical contracts live at **[`openspec/specs/`](openspec/specs/)** — one directory per capability, each with a `spec.md` containing the normative requirements and Given/When/Then scenarios.
 
@@ -29,7 +29,7 @@ Canonical contracts live at **[`openspec/specs/`](openspec/specs/)** — one dir
 - **Graphical selector**: `wofi`/`rofi` menu when invoked without args
 - **Hyprland integration**: auto workspaces, window rules, multi-monitor, HiDPI scaling (jq-native, no `bc`/`python3`)
 - **Security**: hardened env parser (no `source` — allowlist + quote/comment handling), password piped via stdin (hidden from `ps aux`), `flock` single-instance guard, uid-private PID path under `XDG_RUNTIME_DIR`
-- **Robustness**: strict mode (`set -euo pipefail`), `require_cmd` preflight for every external binary, `/from-stdin:force` build gate, array-based flag expansion
+- **Robustness**: strict mode (`set -euo pipefail`), `require_cmd` preflight for every external binary, `/from-stdin:force` build gate, array-based flag expansion, **process-group isolation so `pkill rdp-connect` reaps `xfreerdp3` children** (R7/orphan-kill fix from `multi-peer-race`)
 - **Pre-flight checks**: TCP socket probe on port 3389 before launching
 - **i18n**: Spanish/English message dictionaries, auto-detected from `$LANG`
 - **Auditing**: per-profile logs under `~/.local/state/rdp/`
@@ -103,7 +103,7 @@ If `sha256sum -c` reports any file as `FAILED`, re-run `./install-rdp-framework.
 | `~/.local/state/rdp/<profile>.log` | (runtime) | — |
 | `~/.local/state/rdp/manifest.sha256` | (installer-generated) | — |
 
-PID lockfile: `${XDG_RUNTIME_DIR:-/tmp}/rdp-<profile>-<uid>.pid` (uid-private — two users on the same host never collide).
+PID lockfile: `${XDG_RUNTIME_DIR:-/tmp}/rdp-<profile>-<uid>.pid` (uid-private — two users on the same host never collide). **Note (`multi-peer-race` R7 fix):** the lockfile path now PERSISTS in `XDG_RUNTIME_DIR` after the engine exits. The kernel releases the advisory `flock` automatically when the engine process dies (fd close); the next start's `flock -n` reclaims the stale path. Do NOT delete these `.pid` files manually — they are benign and self-healing. (Previous versions unlinked the path on exit, which created an anonymous inode and allowed a contender to bypass the lock during the cleanup window — R7.)
 
 ## Accepted profile syntax
 
@@ -170,7 +170,16 @@ The smoke target works on a host without `xfreerdp3` / `hyprctl` because `rdp-co
 
 This test harness was built under the `strict-tdd-enable` change (archived — see **[`openspec/changes/archive/strict-tdd-enable/`](openspec/changes/archive/strict-tdd-enable/)** for the proposal, design, and task breakdown). PR1 landed the tooling (Makefile + CI + helper + this README section); PR2 migrated the 46 probe scenarios to `*.bats`; PR3 extracted two more pure functions from the engine (`trim_profile_fields`, `extract_session_error`), added the cleanup-session + engine-security bats coverage those extractions unlock, and flipped `strict_tdd: true` — every future SDD change now follows the red-green-refactor cycle at the unit level. The canonical contract for this capability lives at **[`openspec/specs/test-harness/spec.md`](openspec/specs/test-harness/spec.md)**.
 
-Current suite: **66 bats cases across 7 files** (parser 24 + hidpi 8 + pid-path 6 + vpn-trim 10 + harness 10 + cleanup-session 6 + engine-security 2).
+Current suite: **74 bats cases across 8 files** (parser 24 + hidpi 8 + pid-path 6 + vpn-trim 10 + harness 10 + cleanup-session 6 + engine-security 2 + multi-peer-race 8).
+
+### Recent changes
+
+- **`multi-peer-race` (PR #6, merged 2026-07-21)** — closed the R7 race and the orphan-kill footgun in a single diff. Three user-visible behavior changes:
+  1. **`$PID_FILE` now persists in `$XDG_RUNTIME_DIR` after exit.** The kernel releases the `flock` on fd close; the next start reclaims the path via `flock -n`. (Previous versions unlinked the path, which created an anonymous inode and let a contender bypass the lock during the cleanup window.) See [`openspec/specs/instance-locking/spec.md`](openspec/specs/instance-locking/spec.md) — "EXIT trap preserves the lockfile path".
+  2. **`pkill rdp-connect` now reaps `xfreerdp3` children.** The engine calls `setpgid 0 0` at startup (becomes its own process-group leader); the EXIT trap fires `kill -- -$$` to terminate the whole group before logging/notification. Scoped to the engine's own group only — no collateral damage. See [`openspec/specs/engine-robustness/spec.md`](openspec/specs/engine-robustness/spec.md) — "Process-group isolation and signal-induced cleanup".
+  3. **8 new bats cases** in `tests/multi-peer-race.bats` (3 source-grep + 5 pattern-contract). Full suite 74/74 green; `make ci` rc=0.
+  
+  Change archived at [`openspec/changes/archive/multi-peer-race/`](openspec/changes/archive/multi-peer-race/). The verify report flagged 3 spec scenarios (S6/S9/S10) as having no direct behavioral `@test` coverage — tracked as a follow-up; the engine change itself is safe, correct, and reversible.
 
 ## Specifications
 

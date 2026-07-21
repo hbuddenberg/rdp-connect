@@ -1,0 +1,7 @@
+HOST=vpn.example.com
+USER_RDP=  user
+PASS_RDP=  pass with trailing space
+DOMAIN=corp.local
+VPN_CHECK=10.8.0.1
+PREFERRED_WS=3
+LANG_OVERRIDE=es

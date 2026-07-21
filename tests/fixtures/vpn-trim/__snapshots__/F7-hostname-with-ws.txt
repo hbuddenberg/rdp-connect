@@ -1,0 +1,7 @@
+HOST=vpn.example.com
+USER_RDP=  user@example
+PASS_RDP=  p@ss w0rd
+DOMAIN=
+VPN_CHECK=
+PREFERRED_WS=2
+LANG_OVERRIDE=en

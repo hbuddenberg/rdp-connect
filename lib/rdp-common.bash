@@ -22,7 +22,15 @@
 # Keys accepted in profile files (~/.config/rdp/profiles/*.env). Any key
 # outside this set is rejected by parse_env_safe before any assignment.
 # Mode 'i18n' accepts keys matching the MSG_* prefix instead.
-declare -A _PROFILE_KEYS=(
+#
+# `declare -gA` (global associative array) instead of `declare -A`: when this
+# file is sourced at top level (engine L45) the two forms are equivalent.
+# When sourced inside a function context (bats `load` chains: every tests/*.bats
+# `load test_helper` -> test_helper.bash `source "$LIB_FILE"` happens inside a
+# bats-injected function frame), plain `declare -A` would scope the array
+# LOCALLY to that frame and the allowlist would be empty by the time @test
+# bodies run. `-g` forces global scope regardless of the source depth.
+declare -gA _PROFILE_KEYS=(
   [HOST]=1
   [USER_RDP]=1
   [PASS_RDP]=1

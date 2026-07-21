@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 
-# Capturar errores reales dentro de pipelines
-set -o pipefail
+# T2.2 (F4): strict mode for the entire engine. Tactical `|| true` is applied
+# ONLY to documented cosmetic Hyprland IPC (hyprctl keyword/dispatch) and
+# notify-send calls — NEVER on xfreerdp3, flock, jq, file tests, or any
+# security-relevant call (per engine-robustness-delta R2 mitigation).
+set -euo pipefail
 
 PROFILES_DIR="$HOME/.config/rdp/profiles"
 I18N_DIR="$HOME/.config/rdp/i18n"
@@ -9,11 +12,53 @@ LOG_DIR="$HOME/.local/state/rdp"
 SHARE_DIR="$HOME/Compartido"
 LIB_FILE="$HOME/.local/lib/rdp/rdp-common.bash"
 
-mkdir -p "$LOG_DIR" "$SHARE_DIR"
+mkdir -p "$LOG_DIR" "$SHARE_DIR" "$PROFILES_DIR" "$I18N_DIR"
 
-# --- CARGA DE LA BIBLIOTECA DE FUNCIONES PURAS (F3 parser, F5 PID path) ---
+# --- CARGA DE LA BIBLIOTECA DE FUNCIONES PURAS (F3 parser, F5 PID path, F1 hidpi, F6/F8 helpers) ---
 # shellcheck source=/home/hbuddenberg/.local/lib/rdp/rdp-common.bash
 source "$LIB_FILE"
+
+# --- MODO AYUDA: rdp-connect --help / -h ---
+# MUST run before require_cmd (F6) so --help always works even if a runtime
+# dependency is missing (standard Unix convention). The installer smoke test
+# (T2.3) probes `rdp-connect --help` expecting exit 0.
+if [ "${1:-}" == "--help" ] || [ "${1:-}" == "-h" ]; then
+    cat << 'HELP_EOF'
+rdp-connect — RDP connection framework for Hyprland/Wayland (xfreerdp3)
+
+Usage:
+  rdp-connect                    Open graphical selector (wofi/rofi)
+  rdp-connect <profile>          Direct connection to a profile
+  rdp-connect --new <name>       Create a new profile from template
+  rdp-connect --log <profile>    Tail the profile's audit log
+  rdp-connect --help | -h        Show this help message
+
+Profiles:  ~/.config/rdp/profiles/*.env
+Logs:      ~/.local/state/rdp/<profile>.log
+Lockfile:  ${XDG_RUNTIME_DIR:-/tmp}/rdp-<profile>-<uid>.pid
+HELP_EOF
+    exit 0
+fi
+
+# --- PREFLIGHT (F6 + F7): every external binary present + xfreerdp3 build gate ---
+# F6: require_cmd exits 127 if a binary is missing. Done BEFORE any profile is
+# loaded so a missing dep never reaches a credential-adjacent code path. The
+# wofi|rofi launcher OR-check is deferred to selector mode (only needed there).
+require_cmd xfreerdp3 freerdp3
+require_cmd hyprctl hyprland
+require_cmd jq jq
+require_cmd notify-send libnotify
+require_cmd flock util-linux
+
+# F7: the credential pipe is on the password path. A build without /from-stdin
+# support would either leak the password via /p: on the command line or hang
+# forever reading stdin. The feature gate MUST fail loudly — NEVER silently
+# fall back to /p:.
+if ! xfreerdp3 /help 2>&1 | grep -q from-stdin; then
+    echo "ERROR: xfreerdp3 build does not support /from-stdin:force." >&2
+    echo "       Install a FreeRDP3 build with stdin credential support." >&2
+    exit 1
+fi
 
 # --- DETECCIÓN Y CARGA DE IDIOMA (i18n) ---
 # Cargado a través del parser endurecido (F2: no `source`). El modo `i18n`
@@ -21,7 +66,8 @@ source "$LIB_FILE"
 # aborta el motor — un archivo i18n hostil es un evento de seguridad, no un
 # fallback silencioso.
 load_language() {
-    local target_lang="${1:-${LANG:0:2}}"
+    local target_lang="${1:-${LANG:-es}}"
+    target_lang="${target_lang:0:2}"
     local lang_file="$I18N_DIR/${target_lang}.env"
     [ -f "$lang_file" ] || lang_file="$I18N_DIR/es.env"
     parse_env_safe "$lang_file" i18n || {
@@ -38,8 +84,8 @@ load_language
 # clave fuera de la allowlist aborta el motor.
 
 # --- MODO VISOR DE LOGS: rdp-connect --log <perfil> ---
-if [ "$1" == "--log" ] || [ "$1" == "-l" ]; then
-    LOG_PROFILE="$2"
+if [ "${1:-}" == "--log" ] || [ "${1:-}" == "-l" ]; then
+    LOG_PROFILE="${2:-}"
     [ -z "$LOG_PROFILE" ] && { echo "$MSG_LOG_USAGE"; exit 1; }
     TARGET_LOG="$LOG_DIR/${LOG_PROFILE}.log"
     [ ! -f "$TARGET_LOG" ] && { printf "$MSG_LOG_NO_FILE\n" "$LOG_PROFILE"; exit 1; }
@@ -49,8 +95,8 @@ if [ "$1" == "--log" ] || [ "$1" == "-l" ]; then
 fi
 
 # --- MODO CREADOR: rdp-connect --new <perfil> ---
-if [ "$1" == "--new" ]; then
-    NEW_PROFILE="$2"
+if [ "${1:-}" == "--new" ]; then
+    NEW_PROFILE="${2:-}"
     [ -z "$NEW_PROFILE" ] && { echo "$MSG_NEW_USAGE"; exit 1; }
 
     TARGET_FILE="$PROFILES_DIR/${NEW_PROFILE}.env"
@@ -81,18 +127,33 @@ if [ "$1" == "--new" ]; then
 fi
 
 # --- MODO SELECTOR (Wofi / Rofi) ---
-PROFILE="$1"
+PROFILE="${1:-}"
 if [ -z "$PROFILE" ]; then
+    # F6 launcher OR-check: wofi OR rofi must be present in selector mode.
+    # This check is deferred to here (not in the startup preflight) because the
+    # launcher is only needed when no profile argument is given — a direct
+    # `rdp-connect <profile>` never invokes the selector.
+    if ! command -v wofi &>/dev/null && ! command -v rofi &>/dev/null; then
+        echo "missing required command: wofi or rofi (install one via your package manager)" >&2
+        exit 127
+    fi
     if command -v wofi &>/dev/null; then
-        PROFILE=$(ls "$PROFILES_DIR" | sed 's/\.env$//' | wofi --dmenu --prompt "$MSG_PROMPT_SELECT")
+        PROFILE=$(ls "$PROFILES_DIR" | sed 's/\.env$//' | wofi --dmenu --prompt "$MSG_PROMPT_SELECT" || true)
     elif command -v rofi &>/dev/null; then
-        PROFILE=$(ls "$PROFILES_DIR" | sed 's/\.env$//' | rofi -dmenu -p "$MSG_PROMPT_SELECT")
+        PROFILE=$(ls "$PROFILES_DIR" | sed 's/\.env$//' | rofi -dmenu -p "$MSG_PROMPT_SELECT" || true)
     fi
 fi
 [ -z "$PROFILE" ] && exit 0
 
 ENV_FILE="$PROFILES_DIR/${PROFILE}.env"
-[ ! -f "$ENV_FILE" ] && { notify-send -u critical "RDP Error" "$(printf "$MSG_ERR_NO_PROFILE" "$PROFILE")"; exit 1; }
+[ ! -f "$ENV_FILE" ] && { notify-send -u critical "RDP Error" "$(printf "$MSG_ERR_NO_PROFILE" "$PROFILE")" 2>/dev/null || true; exit 1; }
+
+# Pre-initialize all allowlisted profile keys to empty so set -u never aborts
+# on an optional key the user omitted from their profile. HOST/USER_RDP/PASS_RDP
+# remain effectively required — an empty value produces a clear xfreerdp3 error
+# at connection time (better UX than a set -u "unbound variable" crash).
+HOST="" USER_RDP="" PASS_RDP="" DOMAIN=""
+VPN_CHECK="" PREFERRED_WS="" LANG_OVERRIDE=""
 
 # Carga segura de variables — abort on parser failure (F3 security boundary).
 # parse_env_safe prints 'parse_env_safe: <file>:<line>: <reason>' to stderr;
@@ -102,7 +163,25 @@ parse_env_safe "$ENV_FILE" profile || {
     notify-send -u critical "RDP Error" "Perfil '$PROFILE' inválido. Ver consola." 2>/dev/null || true
     exit 1
 }
-[ -n "$LANG_OVERRIDE" ] && load_language "$LANG_OVERRIDE"
+
+# T2.6: Trim leading/trailing whitespace from network-identifier fields so
+# `VPN_CHECK=" "`, `VPN_CHECK="  10.8.0.1  "`, or `HOST="  server  "` (common
+# copy-paste / editor mistakes) don't silently corrupt the TCP probes.
+# PASS_RDP is intentionally NOT trimmed — passwords MAY legitimately contain
+# leading/trailing spaces. USER_RDP also left untouched for the same reason.
+# Idiom: ${v#"${v%%[![:space:]]*}"} strips leading ws, ${v%"${v##*[![:space:]]}"}
+# strips trailing ws (parameter expansion only — no subshell, no set -e trap).
+for _field in HOST VPN_CHECK DOMAIN PREFERRED_WS LANG_OVERRIDE; do
+    # shellcheck disable=SC2229  # dynamic var name is intentional; values come from a fixed allowlist
+    _val="${!_field}"
+    _val="${_val#"${_val%%[![:space:]]*}"}"
+    _val="${_val%"${_val##*[![:space:]]}"}"
+    # shellcheck disable=SC2229  # see above
+    printf -v "$_field" '%s' "$_val"
+done
+unset _field _val
+
+[ -n "${LANG_OVERRIDE:-}" ] && load_language "$LANG_OVERRIDE"
 
 WM_CLASS="rdp-${PROFILE}"
 LOG_FILE="$LOG_DIR/${PROFILE}.log"
@@ -121,15 +200,22 @@ log_event() {
 # so our flock -n succeeds and we overwrite the stale PID content below
 # (stale-lock reclamation is automatic). A live peer holds the fd → flock -n
 # fails → we focus the existing window and exit 0 (peer-honored).
+#
+# _LOCK_ACQUIRED (multi-peer race fix from T1.4 discovery): only the lock owner
+# unlinks the PID file in the EXIT trap. A peer that failed flock -n does NOT
+# own the lock — unlinking the file would break the first instance's per-inode
+# flock and allow a third instance to bypass it.
+_LOCK_ACQUIRED=false
 exec 200>"$PID_FILE"
 if ! flock -n 200; then
     # shellcheck disable=SC2188  # $(<file) is the bash no-fork file-read idiom; 2>/dev/null + || true handle missing/unreadable files (peer holds lock but file content may be empty if peer crashed before writing)
     _peer=$(<"$PID_FILE" 2>/dev/null || true)
     log_event "WARN" "Instancia activa pid=${_peer:-?} detectada. Enfocando ventana..."
-    notify-send -i display "RDP $PROFILE" "$MSG_ALREADY_ACTIVE"
+    notify-send -i display "RDP $PROFILE" "$MSG_ALREADY_ACTIVE" || true
     hyprctl dispatch focuswindow "class:^($WM_CLASS)$" || true
     exit 0
 fi
+_LOCK_ACQUIRED=true
 echo "$$" >&200
 
 # --- CLEANUP TRAP & DIAGNÓSTICO ---
@@ -139,34 +225,76 @@ cleanup() {
     DURATION=$((END_TIME - START_TIME))
 
     if [ $EXIT_CODE -ne 0 ]; then
-        LAST_ERROR=$(tail -n 15 "$LOG_FILE" | grep -iE "error|failed|status|connect" | tail -n 1)
+        # F9: guard LOG_FILE access — early exits (require_cmd failure, parse
+        # error) may fire the trap before any log line is written. The [ -f ]
+        # check prevents a "No such file" diagnostic; the || true on the
+        # extractor handles the no-match case.
+        #
+        # T2.5 (Bug B): scope the error search to the CURRENT session only.
+        # The SESSION_START marker (pid=$$) written as the first log line of
+        # this session bounds the awk scan — without it, the old `tail -n 15`
+        # would surface stale ERROR lines from PREVIOUS sessions in the same
+        # per-profile LOG_FILE as if they were this session's failure cause
+        # (e.g. an old "VPN requerida inalcanzable" from days ago reported
+        # as the cause of a fresh parse/preflight failure).
+        #
+        # The pid= suffix on the marker makes it unique to THIS process so
+        # concurrent sessions on the same profile (impossible under flock but
+        # defensive) cannot cross-pollinate. If no SESSION_START marker for
+        # our PID exists (e.g. trap fired before the first log_event call),
+        # nothing is captured — the caller falls back to the generic
+        # 'Ver log en $LOG_FILE' message, which is correct.
+        LAST_ERROR=""
+        if [ -f "$LOG_FILE" ] && [ -n "${START_TIME:-}" ]; then
+            LAST_ERROR=$(awk -v pid="$$" '
+                $0 ~ /\[SESSION_START\]/ && $0 ~ "pid="pid"([^0-9]|$)" { found=1; next }
+                found && tolower($0) ~ /error|failed|status|connect/ { last=$0 }
+                END { if (last) print last }
+            ' "$LOG_FILE" || true)
+        fi
         log_event "ERROR" "Sesión finalizada con error (Código $EXIT_CODE). Duración: ${DURATION}s."
         log_event "ERROR" "Causa reportada: ${LAST_ERROR:-Error no especificado}"
-        notify-send -u critical -i network-error "RDP $PROFILE Error" "${LAST_ERROR:-Ver log en $LOG_FILE}"
+        notify-send -u critical -i network-error "RDP $PROFILE Error" "${LAST_ERROR:-Ver log en $LOG_FILE}" || true
     else
         log_event "INFO" "Sesión finalizada correctamente. Duración total: ${DURATION}s."
-        notify-send -i display-off "RDP $PROFILE" "$MSG_SESSION_ENDED"
+        notify-send -i display-off "RDP $PROFILE" "$MSG_SESSION_ENDED" || true
     fi
-    # T1.4 (F5): remove the uid-private PID file at the NEW path on every exit.
-    # The `[ -f ]` guard tolerates early-exit-before-flock (when the file was
-    # never created) per the instance-locking "Early-exit before flock does
-    # not error" scenario. Belt-and-suspenders with rm -f; explicit per the
-    # T1.4 design note (this guard is self-contained here for F5; F9's
-    # LOG_FILE guard rides in T2.2 where `set -e` makes it load-bearing).
-    [ -f "$PID_FILE" ] && rm -f "$PID_FILE"
+    # Multi-peer race fix (T1.4 discovery): only the lock owner unlinks the PID
+    # file. A peer that failed flock -n does NOT own the lock — unlinking the
+    # file would break the first instance's per-inode flock and allow a third
+    # instance to bypass it. Belt-and-suspenders: the trap is registered after
+    # the flock block, so _LOCK_ACQUIRED is true by the time cleanup can fire;
+    # the check protects against future refactors that move the trap earlier.
+    if [ "${_LOCK_ACQUIRED:-false}" = true ] && [ -f "$PID_FILE" ]; then
+        rm -f "$PID_FILE"
+    fi
 }
 trap cleanup EXIT
 
+# T2.5 (Bug B): SESSION_START marker is the FIRST log line of this session.
+# cleanup() uses it to scope its error diagnostic to the CURRENT session only
+# — preventing stale ERROR lines from previous sessions (same per-profile
+# LOG_FILE) from being reported as this session's failure cause. The pid=
+# suffix makes the marker unique to this PID so concurrent sessions on the
+# same profile (impossible under flock but defensive) can't cross-pollinate.
+# This MUST be the first log_event call so any later failure (VPN check, host
+# check, xfreerdp3) has a bounded "current session" window to scan.
+log_event "SESSION_START" "pid=$$ profile=$PROFILE"
 log_event "INFO" "=================== INICIO DE SESIÓN RDP ==================="
 log_event "INFO" "Perfil: $PROFILE | Host: $HOST | Usuario: $USER_RDP"
 
 # --- PRE-FLIGHT CHECK (Vía socket nativo /dev/tcp) ---
-if [ -n "$VPN_CHECK" ]; then
+# T2.6: VPN_CHECK is trimmed right after parse_env_safe (line ~167), so "  " or
+# "  host  " in the profile becomes "" or "host" respectively. The guard below
+# then correctly treats empty (no VPN configured) as SKIP, and a real host as
+# ENTER. Without the trim, "  " passed `-n` and produced "VPN requerida ( )
+# inalcanzable" on every invocation.
+if [ -n "${VPN_CHECK:-}" ]; then
     log_event "INFO" "Verificando VPN ($VPN_CHECK)..."
     if ! timeout 2 bash -c "</dev/tcp/$VPN_CHECK/3389" &>/dev/null; then
         ERR_VPN=$(printf "$MSG_ERR_VPN" "$VPN_CHECK")
         log_event "ERROR" "VPN requerida ($VPN_CHECK) inalcanzable. Abortando."
-        notify-send -u critical -i network-vpn "RDP Error" "$ERR_VPN"
+        notify-send -u critical -i network-vpn "RDP Error" "$ERR_VPN" || true
         exit 1
     fi
 fi
@@ -175,36 +303,36 @@ log_event "INFO" "Verificando disponibilidad de puerto 3389 en $HOST..."
 if ! timeout 2 bash -c "</dev/tcp/$HOST/3389" &>/dev/null; then
     ERR_HOST=$(printf "$MSG_ERR_HOST_UNREACHABLE" "$HOST")
     log_event "ERROR" "Servidor $HOST:3389 inalcanzable. Abortando."
-    notify-send -u critical -i network-error "RDP Error" "$ERR_HOST"
+    notify-send -u critical -i network-error "RDP Error" "$ERR_HOST" || true
     exit 1
 fi
 log_event "INFO" "Puerto 3389 en $HOST respondiendo correctamente."
 
-# --- HIDPI AUTO-SCALING ---
-SCALE=$(hyprctl monitors -j | jq -r '.[0].scale // 1.0')
-DPI_FLAGS=""
-if (( $(echo "$SCALE > 1.0" | bc -l 2>/dev/null || echo "0") )); then
-    SCALE_PCT=$(python3 -c "print(int($SCALE * 100))" 2>/dev/null || echo "100")
-    DPI_FLAGS="/scale-desktop:$SCALE_PCT /smart-sizing"
-    log_event "INFO" "Escalado HiDPI detectado ($SCALE). Aplicando /scale-desktop:$SCALE_PCT."
-fi
+# --- HIDPI AUTO-SCALING (F1: jq-native, no bc/python3) ---
+# compute_dpi_flags lives in lib/rdp-common.bash. It sets DPI_FLAGS[] (array),
+# IS_HIDPI, and SCALE_PCT via a single `hyprctl monitors -j | jq` call.
+# Null / missing / non-numeric scale → WARN + 100% fallback (session proceeds).
+compute_dpi_flags
 
 # --- MULTI-MONITOR Y REGLAS DE HYPRLAND ---
 MONITORS=$(hyprctl monitors -j | jq -r '.[].id' | paste -sd, -)
 MON_COUNT=$(hyprctl monitors -j | jq '. | length')
-MON_FLAGS=$([ "$MON_COUNT" -gt 1 ] && echo "/multimon /monitors:$MONITORS" || echo "/f")
+# F8: MON_FLAGS is an array, not a string. build_mon_flags (in lib) sets
+# MON_FLAGS=("/multimon" "/monitors:<ids>") or ("/f"). Expanded with the
+# quoted-safe form "${MON_FLAGS[@]-}" at the xfreerdp3 invocation site below.
+build_mon_flags "$MON_COUNT" "$MONITORS"
 
 log_event "INFO" "Pantallas detectadas en Hyprland: $MON_COUNT (IDs: $MONITORS)."
 
-if [ -n "$PREFERRED_WS" ]; then
-    hyprctl keyword windowrulev2 "workspace $PREFERRED_WS, class:^($WM_CLASS)$" &>/dev/null
+if [ -n "${PREFERRED_WS:-}" ]; then
+    hyprctl keyword windowrulev2 "workspace $PREFERRED_WS, class:^($WM_CLASS)$" &>/dev/null || true
     log_event "INFO" "Asignando ventana $WM_CLASS al Workspace $PREFERRED_WS."
 fi
 
 export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
 export LIBVA_DRIVER_NAME=iHD
 
-notify-send -i display "RDP Framework" "$(printf "$MSG_CONNECTING" "$PROFILE" "$MON_COUNT")"
+notify-send -i display "RDP Framework" "$(printf "$MSG_CONNECTING" "$PROFILE" "$MON_COUNT")" || true
 
 log_event "INFO" "Lanzando xfreerdp3 mediante STDIN seguro..."
 
@@ -217,8 +345,8 @@ echo "$PASS_RDP" | xfreerdp3 \
   /wm-class:"$WM_CLASS" \
   /sec:nla \
   /cert:tofu \
-  $MON_FLAGS \
-  $DPI_FLAGS \
+  "${MON_FLAGS[@]-}" \
+  "${DPI_FLAGS[@]-}" \
   +grab-keyboard \
   /async-input \
   /async-update \

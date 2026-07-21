@@ -55,24 +55,40 @@ _reject() {
 # Mode 'i18n': only keys matching the MSG_* prefix are accepted.
 #
 # Value normalization by leading character:
-#   double-quote  → strip outer quotes; interior '#' preserved verbatim
-#   single-quote  → strip outer quotes; interior '#' preserved verbatim
-#   unquoted      → strip trailing ' # comment' (whitespace-then-#), trim ws
+#   double-quote  → strip outer quotes; interior '#' preserved verbatim;
+#                   tolerate trailing whitespace + optional `# comment` after
+#                   the closing quote (T2.4: also tolerates CRLF line endings).
+#   single-quote  → same as double-quote.
+#   unquoted      → strip trailing ' # comment' (whitespace-then-#), trim ws.
+#
+# CRLF tolerance (T2.4): a trailing `\r` left by Windows-style `\r\n` line
+# endings is stripped at the top of the loop, BEFORE any value inspection.
+# Without this, `VPN_CHECK=""\r` was misreported as "unterminated quote".
 #
 # Augmentation beyond design.md (per task T1.2 prompt): an unquoted value
 # containing '#' WITHOUT preceding whitespace (e.g. `KEY=value# x`) is
 # rejected — it is ambiguous (typo'ed comment delimiter or leaky quote) and
 # silently truncating it to `value#` would corrupt the data. Forces the user
 # to be explicit. See apply-progress T1.2 deviations note.
+#
+# T2.4 diagnostic improvement: unterminated quotes and unexpected trailing
+# content both include a 40-char sanitized preview of the offending raw value
+# so users can see invisible whitespace / CRLF / stray characters.
 parse_env_safe() {
-  local file="$1" mode="${2:-profile}" line key raw value lineno=0 q
+  local file="$1" mode="${2:-profile}" line key raw value lineno=0 q rest closing_part tail
   # shellcheck disable=SC2094  # _reject writes stderr only; $file is read-only input
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno+1))
-    line="${line#"${line%%[![:space:]]*}"}"           # trim leading whitespace
-    [[ -z "$line" || "$line" == \#* ]] && continue    # blank / full-line comment
+    # T2.4: strip a trailing CR left by CRLF line endings (Windows-edited or
+    # clipboard-mangled profiles). `read -r` on Linux splits on LF only, so a
+    # CRLF file leaves a literal \r at the end of `line`. Without this strip,
+    # `VPN_CHECK=""\r` failed the old "raw ends with quote" check and was
+    # misreported as "unterminated quote".
+    line="${line%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"              # trim leading whitespace
+    [[ -z "$line" || "$line" == \#* ]] && continue       # blank / full-line comment
     [[ "$line" != *=* ]] && { _reject "$file" "$lineno" "no '=' delimiter"; return 1; }
-    key="${line%%=*}"; raw="${line#*=}"                # split on FIRST '=' → preserves '=' in passwords
+    key="${line%%=*}"; raw="${line#*=}"                  # split on FIRST '=' → preserves '=' in passwords
     [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { _reject "$file" "$lineno" "invalid key '$key'"; return 1; }
     # allowlist BEFORE any assignment (spec: "no printf -v on unknown keys")
     # NOTE: `-v` (is-set) test, NOT `${arr[$k]}` — under `set -u` a missing assoc
@@ -89,8 +105,32 @@ parse_env_safe() {
     else q=                                              # unquoted
     fi
     if [[ -n "$q" ]]; then
-      [[ "$raw" != *"$q" ]] && { _reject "$file" "$lineno" "unterminated quote"; return 1; }
-      value="${raw:1:${#raw}-2}"                         # strip outer quotes; interior '#' preserved verbatim
+      # T2.4: quoted-value handling. The OLD logic required `raw` to END with
+      # the quote char, which misrejected legitimately-terminated values that
+      # had trailing whitespace, a CRLF, or an inline `# comment` after the
+      # closing quote — all reported as the misleading "unterminated quote".
+      #
+      # New approach: find the FIRST closing quote (so a '#' inside the quoted
+      # value like PASS_RDP="p# x" is preserved verbatim), then validate that
+      # whatever FOLLOWS the closing quote is empty, whitespace-only, or
+      # whitespace + `# comment`. Anything else is rejected with a clearer
+      # message naming the offending tail.
+      rest="${raw:1}"                                    # raw minus the leading quote
+      closing_part="${rest%%"$q"*}"                      # text before the first closing quote
+      if [[ "$closing_part" == "$rest" ]]; then
+        # No closing quote anywhere on the line → genuinely unterminated.
+        # Include a 40-char sanitized preview of the raw value so the user can
+        # SEE what's wrong (invisible whitespace / CRLF is otherwise hidden).
+        _reject "$file" "$lineno" "unterminated quote (raw: '${raw:0:40}')"
+        return 1
+      fi
+      value="$closing_part"
+      tail="${rest#*"$q"}"                               # what follows the first closing quote
+      # tail MUST be empty, whitespace-only, or whitespace + `# comment`.
+      if [[ -n "$tail" && ! "$tail" =~ ^[[:space:]]*(#.*)?$ ]]; then
+        _reject "$file" "$lineno" "unexpected content after closing quote: '${tail:0:40}'"
+        return 1
+      fi
     else
       # augmentation: reject unquoted '#' without preceding whitespace
       if [[ "$raw" == *#* && "$raw" != *[[:space:]]#* ]]; then
@@ -118,4 +158,90 @@ parse_env_safe() {
 # the symlink/DoS vector the legacy /tmp/rdp-<profile>.pid path exposed.
 compute_pid_path() {
   printf '%s/rdp-%s-%s.pid' "${XDG_RUNTIME_DIR:-/tmp}" "$1" "$(id -u)"
+}
+
+# ---------------------------------------------------------------------------
+# F1 — jq-native HiDPI scale math (replaces bc + python3)
+# ---------------------------------------------------------------------------
+# compute_dpi_flags
+#
+# Reads `.[0].scale` from `hyprctl monitors -j` via a SINGLE jq invocation and
+# sets three globals:
+#   DPI_FLAGS   — bash array, empty under 100%, else (/scale-desktop:N /smart-sizing)
+#   IS_HIDPI    — "1" if scale > 1, else "0"
+#   SCALE_PCT   — integer percentage (e.g. 150 for scale 1.5)
+#
+# Null / missing / non-numeric / malformed-JSON scale → IS_HIDPI=0 SCALE_PCT=100
+# with a WARN log line naming the unparsable value. The engine MUST NOT abort
+# on a scale-parse failure (spec: "Safe fallback when scale cannot be determined").
+#
+# jq notes:
+#   - `tonumber` on null/missing/non-numeric throws → caught by `try/catch` →
+#     lands in the WARN fallback branch. This is deliberately NOT using jq's `//`
+#     alternative operator, which would silently substitute for null/missing and
+#     mask the very "unparsable" case the spec requires to emit a WARN.
+#   - `$n*100|round` produces the integer percentage without bc or python3.
+compute_dpi_flags() {
+  local raw scale_valid out
+  IS_HIDPI=0
+  SCALE_PCT=100
+  DPI_FLAGS=()
+  out=$(hyprctl monitors -j 2>/dev/null | jq -r '
+      .[0].scale as $raw
+    | (try ($raw | tonumber) catch null) as $n
+    | if $n == null then "0\t100\tinvalid\t\($raw)"
+      else (if $n > 1 then "1" else "0" end)
+        + "\t" + (($n * 100) | round | tostring)
+        + "\tvalid\t\($raw)"
+      end
+  ' 2>/dev/null) || out=""
+  IFS=$'\t' read -r IS_HIDPI SCALE_PCT scale_valid raw <<<"$out"
+  if [[ "$scale_valid" != "valid" ]]; then
+    IS_HIDPI=0
+    SCALE_PCT=100
+    log_event "WARN" "unparsable monitor scale '${raw:-<missing>}'; defaulting to 100%"
+  elif [[ "$IS_HIDPI" == "1" ]]; then
+    # shellcheck disable=SC2034  # DPI_FLAGS consumed by engine/rdp-connect (sourced lib pattern)
+    DPI_FLAGS=("/scale-desktop:${SCALE_PCT}" "/smart-sizing")
+    log_event "INFO" "HiDPI scale ${raw} -> /scale-desktop:${SCALE_PCT}."
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# F6 — require_cmd: startup dependency preflight
+# ---------------------------------------------------------------------------
+# require_cmd <name> [pkg_hint]
+#
+# Exits 127 with a clear message if <name> is not on PATH. The optional
+# pkg_hint names the package the user should install. Called by the engine
+# at startup — before any profile is loaded — so a missing binary never
+# reaches a credential-adjacent code path.
+require_cmd() {
+  local cmd="$1" pkg="${2:-$1}"
+  if ! command -v "$cmd" &>/dev/null; then
+    printf 'missing required command: %s (install via your package manager, e.g. %s)\n' \
+      "$cmd" "$pkg" >&2
+    exit 127
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# F8 — build_mon_flags: array-based monitor flags
+# ---------------------------------------------------------------------------
+# build_mon_flags <count> <ids>
+#
+# Sets MON_FLAGS[] as a bash array:
+#   count > 1 → ("/multimon" "/monitors:<ids>")
+#   count ≤ 1 → ("/f")
+# Always initializes the array (never unset) so "${MON_FLAGS[@]-}" expands
+# cleanly under set -u.
+build_mon_flags() {
+  local count="$1" ids="$2"
+  MON_FLAGS=()
+  if [ "$count" -gt 1 ]; then
+    MON_FLAGS=("/multimon" "/monitors:$ids")
+  else
+    # shellcheck disable=SC2034  # MON_FLAGS consumed by engine/rdp-connect (sourced lib pattern)
+    MON_FLAGS=("/f")
+  fi
 }

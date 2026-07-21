@@ -69,6 +69,24 @@ expect_val() {
   fi
 }
 
+# expect_rc_msg <label> <fixture> <mode> <expected_rc> <expected_stderr_substring>
+# Captures the child bash's stderr (where _reject writes) and asserts both the
+# return code AND that the diagnostic contains the substring. Used to verify
+# T2.4's improved error messages (raw-value preview, "unexpected content" tag).
+expect_rc_msg() {
+  local label="$1" fixture="$2" mode="$3" expected="$4" msg="$5"
+  local out err rc
+  : > "$TMP/err"
+  out=$(run_probe "$fixture" "$mode" "_unused_" 2>"$TMP/err")
+  rc=${out%%$'\t'*}
+  err=$(<"$TMP/err")
+  if [[ "$rc" == "$expected" && "$err" == *"$msg"* ]]; then
+    ok "$label (rc=$rc, stderr matched <$msg>)"
+  else
+    fail "$label" "expected rc=$expected and stderr containing <$msg>; got rc=$rc err=<$err>"
+  fi
+}
+
 echo "parse_env_safe probe — lib=$LIB"
 echo
 
@@ -152,6 +170,73 @@ if [[ "$rc" == "1" ]]; then
 else
   fail "F14 set -u safety: rejected key returns 1" "expected rc=1, got rc=$rc; out=$out"
 fi
+
+# ============================================================================
+# T2.4 — quoted-value robustness: CRLF, trailing whitespace, inline comments,
+# clearer diagnostics. All cases below MUST pass on the new parser; F15/F22
+# are regressions for behavior that was already correct and must stay correct.
+# ============================================================================
+
+# ---- F15: regression — empty quoted value (was already correct) -------------
+expect_val "F15 empty quoted value" \
+           'VPN_CHECK=""\n' \
+           profile VPN_CHECK ''
+
+# ---- F16: NEW — CRLF line ending after closing quote ------------------------
+# printf '%b' interprets \r — the fixture file gets real CRLF bytes.
+# Without the T2.4 `line="${line%$'\r'}"` strip, this was misreported as
+# "unterminated quote" because the trailing \r failed the old "raw ends with
+# quote" check.
+expect_val "F16 CRLF after closing quote (empty value)" \
+           'VPN_CHECK=""\r\n' \
+           profile VPN_CHECK ''
+
+# ---- F17: NEW — trailing space after closing quote --------------------------
+expect_val "F17 trailing space after closing quote" \
+           'HOST="value" \n' \
+           profile HOST 'value'
+
+# ---- F18: NEW — trailing tab after closing quote ----------------------------
+expect_val "F18 trailing tab after closing quote" \
+           'HOST="value"\t\n' \
+           profile HOST 'value'
+
+# ---- F19: NEW — inline comment after closing quote --------------------------
+expect_val "F19 inline comment after closing quote" \
+           'HOST="value" # comment\n' \
+           profile HOST 'value'
+
+# ---- F20: NEW — non-whitespace garbage after closing quote is REJECTED ------
+# Old parser: silently extracted "value" as the value (off-by-one in the
+# `${raw:1:${#raw}-2}` slice — accepted `HOST="value"garbage` as `value"garbage`-1
+# chars minus outer quotes, leaking the closing quote and trailing junk into
+# the value). New parser: reject with "unexpected content after closing quote".
+expect_rc_msg "F20 reject garbage after closing quote" \
+              'HOST="value"garbage\n' \
+              profile 1 "unexpected content after closing quote"
+
+# ---- F21: NEW — unterminated quote includes raw-value preview ---------------
+# Old diagnostic was the bare "unterminated quote" with no context, hiding the
+# actual offending bytes (invisible whitespace / CRLF). New diagnostic includes
+# a 40-char preview so the user can SEE what's wrong.
+expect_rc_msg "F21 unterminated quote shows raw preview" \
+              'HOST="value\n' \
+              profile 1 "unterminated quote (raw:"
+
+# ---- F22: regression — quoted password containing '=' (first-= split) -------
+# Verifies the new closing-quote search handles quoted values with embedded
+# `=`. The first-= split happened BEFORE this block, so raw='"a=b=c"'; the
+# closing-quote search finds the trailing `"` and value preserves `a=b=c`.
+expect_val "F22 quoted value with = signs" \
+           'PASS_RDP="a=b=c"\n' \
+           profile PASS_RDP 'a=b=c'
+
+# ---- F23: regression — quoted value containing '#' (interior preserved) -----
+# Re-verifies F4 with the new closing-quote search: the FIRST `"` after the
+# leading one is the closer, so `# production` stays inside the value.
+expect_val "F23 quoted value with # inside (interior preserved)" \
+           'HOST="server # production"\n' \
+           profile HOST 'server # production'
 
 echo
 if [[ "$FAIL" == 0 ]]; then

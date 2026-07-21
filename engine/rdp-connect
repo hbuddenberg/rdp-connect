@@ -6,22 +6,14 @@
 # security-relevant call (per engine-robustness-delta R2 mitigation).
 set -euo pipefail
 
-PROFILES_DIR="$HOME/.config/rdp/profiles"
-I18N_DIR="$HOME/.config/rdp/i18n"
-LOG_DIR="$HOME/.local/state/rdp"
-SHARE_DIR="$HOME/Compartido"
-LIB_FILE="$HOME/.local/lib/rdp/rdp-common.bash"
-
-mkdir -p "$LOG_DIR" "$SHARE_DIR" "$PROFILES_DIR" "$I18N_DIR"
-
-# --- CARGA DE LA BIBLIOTECA DE FUNCIONES PURAS (F3 parser, F5 PID path, F1 hidpi, F6/F8 helpers) ---
-# shellcheck source=/home/hbuddenberg/.local/lib/rdp/rdp-common.bash
-source "$LIB_FILE"
-
 # --- MODO AYUDA: rdp-connect --help / -h ---
-# MUST run before require_cmd (F6) so --help always works even if a runtime
-# dependency is missing (standard Unix convention). The installer smoke test
-# (T2.3) probes `rdp-connect --help` expecting exit 0.
+# MUST be the FIRST arg-handling block. Runs BEFORE require_cmd (F6) AND before
+# the lib source / mkdir setup so `--help` is a pure documentation path that
+# works in any HOME (including throwaway HOME from `make smoke` and CI probes).
+# Standard Unix convention: `--help` exits 0 with no side effects.
+# Previously this block sat at line 25, AFTER `mkdir -p` + `source "$LIB_FILE"`
+# at lines 15-19, which caused `make smoke` (HOME=$(mktemp -d)) to fail at the
+# source step before --help could fire. See verify-report-pr1 W-5.
 if [ "${1:-}" == "--help" ] || [ "${1:-}" == "-h" ]; then
     cat << 'HELP_EOF'
 rdp-connect — RDP connection framework for Hyprland/Wayland (xfreerdp3)
@@ -39,6 +31,18 @@ Lockfile:  ${XDG_RUNTIME_DIR:-/tmp}/rdp-<profile>-<uid>.pid
 HELP_EOF
     exit 0
 fi
+
+PROFILES_DIR="$HOME/.config/rdp/profiles"
+I18N_DIR="$HOME/.config/rdp/i18n"
+LOG_DIR="$HOME/.local/state/rdp"
+SHARE_DIR="$HOME/Compartido"
+LIB_FILE="$HOME/.local/lib/rdp/rdp-common.bash"
+
+mkdir -p "$LOG_DIR" "$SHARE_DIR" "$PROFILES_DIR" "$I18N_DIR"
+
+# --- CARGA DE LA BIBLIOTECA DE FUNCIONES PURAS (F3 parser, F5 PID path, F1 hidpi, F6/F8 helpers) ---
+# shellcheck source=/home/hbuddenberg/.local/lib/rdp/rdp-common.bash
+source "$LIB_FILE"
 
 # --- PREFLIGHT (F6 + F7): every external binary present + xfreerdp3 build gate ---
 # F6: require_cmd exits 127 if a binary is missing. Done BEFORE any profile is

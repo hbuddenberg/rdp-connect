@@ -32,10 +32,10 @@ Chain strategy: stacked-to-main
 
 ## PR1 — security-core  (branch `pr1/security-core` ← `main`)
 
-- [ ] **T1.1** `refactor(install): extract engine, lib, i18n, template into real repo files` — F10-prep (design commit 1)
-  - Files: `engine/rdp-connect` (new, from heredoc body), `lib/rdp-common.bash` (new: `_PROFILE_KEYS` decl, `_reject`, fn stubs), `i18n/es.env`, `i18n/en.env`, `template/template.env` (new), `install-rdp-framework.sh` (drop engine/i18n/template heredocs → `install -D` copy). No logic change.
-  - Deps: none. Size: ~570 (≈480 verbatim move → `size:exception` candidate).
-  - [ ] manual-verification: installer → **Engine is copied, not heredoc-generated** (`diff -q engine/rdp-connect ~/.local/bin/rdp-connect` clean; no `cat <<` for engine/i18n/template deployment)
+- [x] **T1.1** `refactor(install): extract engine, lib, i18n, template into real repo files` — F10-prep (design commit 1)
+   - Files: `engine/rdp-connect` (new, from heredoc body), `lib/rdp-common.bash` (new: `_PROFILE_KEYS` decl, `_reject`, fn stubs), `i18n/es.env`, `i18n/en.env`, `template/template.env` (new), `install-rdp-framework.sh` (drop engine/i18n/template heredocs → `install -D` copy). No logic change.
+   - Deps: none. Size: ~570 (≈480 verbatim move → `size:exception` candidate).
+   - [x] manual-verification: installer → **Engine is copied, not heredoc-generated** (`diff -q engine/rdp-connect ~/.local/bin/rdp-connect` clean; no `cat <<` for engine/i18n/template deployment) — PASS @ fa2b10e
 
 - [ ] **T1.2** `fix(security): harden parse_env_safe with allowlist and quote/comment handling` — F3 (design commit 2)
   - Files: `lib/rdp-common.bash` (`parse_env_safe` full impl incl. `i18n` MSG_* mode), `engine/rdp-connect` (`source <profile>` → `parse_env_safe "$f" profile`), `tests/parser-probe.sh` (rejects `PATH=/x`).

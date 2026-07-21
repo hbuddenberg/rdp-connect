@@ -7,8 +7,13 @@ PROFILES_DIR="$HOME/.config/rdp/profiles"
 I18N_DIR="$HOME/.config/rdp/i18n"
 LOG_DIR="$HOME/.local/state/rdp"
 SHARE_DIR="$HOME/Compartido"
+LIB_FILE="$HOME/.local/lib/rdp/rdp-common.bash"
 
 mkdir -p "$LOG_DIR" "$SHARE_DIR"
+
+# --- CARGA DE LA BIBLIOTECA DE FUNCIONES PURAS (F3 parser, F5 PID path) ---
+# shellcheck source=/home/hbuddenberg/.local/lib/rdp/rdp-common.bash
+source "$LIB_FILE"
 
 # --- DETECCIÓN Y CARGA DE IDIOMA (i18n) ---
 load_language() {
@@ -19,15 +24,10 @@ load_language() {
 load_language
 
 # --- PARSER SEGURO DE CONFIGURACIÓN (Previene inyección de código Bash) ---
-parse_env_safe() {
-    local file="$1"
-    while IFS='=' read -r key value || [ -n "$key" ]; do
-        [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
-        # Sanitizar comillas iniciales y finales
-        value=$(echo "$value" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
-        printf -v "$key" "%s" "$value"
-    done < "$file"
-}
+# La implementación vive en lib/rdp-common.bash (sourced arriba como LIB_FILE).
+# Permite allowlist estricto (HOST, USER_RDP, PASS_RDP, DOMAIN, VPN_CHECK,
+# PREFERRED_WS, LANG_OVERRIDE) y normaliza comillas/comentarios. Cualquier
+# clave fuera de la allowlist aborta el motor.
 
 # --- MODO VISOR DE LOGS: rdp-connect --log <perfil> ---
 if [ "$1" == "--log" ] || [ "$1" == "-l" ]; then
@@ -86,8 +86,14 @@ fi
 ENV_FILE="$PROFILES_DIR/${PROFILE}.env"
 [ ! -f "$ENV_FILE" ] && { notify-send -u critical "RDP Error" "$(printf "$MSG_ERR_NO_PROFILE" "$PROFILE")"; exit 1; }
 
-# Carga segura de variables
-parse_env_safe "$ENV_FILE"
+# Carga segura de variables — abort on parser failure (F3 security boundary).
+# parse_env_safe prints 'parse_env_safe: <file>:<line>: <reason>' to stderr;
+# the engine surfaces via notify-send (best-effort) and exits 1 so a malformed
+# or hostile profile can NEVER reach xfreerdp3.
+parse_env_safe "$ENV_FILE" profile || {
+    notify-send -u critical "RDP Error" "Perfil '$PROFILE' inválido. Ver consola." 2>/dev/null || true
+    exit 1
+}
 [ -n "$LANG_OVERRIDE" ] && load_language "$LANG_OVERRIDE"
 
 WM_CLASS="rdp-${PROFILE}"

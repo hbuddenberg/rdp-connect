@@ -1,0 +1,48 @@
+# test.yml — CI for rdp-connect
+# Spec: openspec/changes/strict-tdd-enable/specs/test-harness-delta.md
+#
+# Runs `make ci` (= `lint test`) on every push and pull_request against main.
+# ubuntu-latest ships bats >= 1.5.0 via apt, satisfying the R1 floor enforced
+# by tests/test_helper.bash::bats_require_minimum_version.
+#
+# xfreerdp3 and hyprctl are deliberately NOT installed. Every bats test is
+# lib-boundary (sources lib/rdp-common.bash, exercises pure functions); the
+# engine's `--help` path exits 0 at engine L40 BEFORE `require_cmd` runs at
+# L47, so the harness.bats::make_install_delegates_to_installer PATH-shim spy
+# works without ever hitting the installer's hard-dep check. See design.md
+# Architecture Decision: ci_xfreerdp3_strategy (option c).
+
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight runs for the same ref when a new commit lands.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats shellcheck jq libnotify-bin util-linux
+
+      - name: make ci
+        run: make ci
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: tests/
+          if-no-files-found: warn

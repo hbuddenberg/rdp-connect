@@ -163,6 +163,24 @@ parse_env_safe "$ENV_FILE" profile || {
     notify-send -u critical "RDP Error" "Perfil '$PROFILE' inválido. Ver consola." 2>/dev/null || true
     exit 1
 }
+
+# T2.6: Trim leading/trailing whitespace from network-identifier fields so
+# `VPN_CHECK=" "`, `VPN_CHECK="  10.8.0.1  "`, or `HOST="  server  "` (common
+# copy-paste / editor mistakes) don't silently corrupt the TCP probes.
+# PASS_RDP is intentionally NOT trimmed — passwords MAY legitimately contain
+# leading/trailing spaces. USER_RDP also left untouched for the same reason.
+# Idiom: ${v#"${v%%[![:space:]]*}"} strips leading ws, ${v%"${v##*[![:space:]]}"}
+# strips trailing ws (parameter expansion only — no subshell, no set -e trap).
+for _field in HOST VPN_CHECK DOMAIN PREFERRED_WS LANG_OVERRIDE; do
+    # shellcheck disable=SC2229  # dynamic var name is intentional; values come from a fixed allowlist
+    _val="${!_field}"
+    _val="${_val#"${_val%%[![:space:]]*}"}"
+    _val="${_val%"${_val##*[![:space:]]}"}"
+    # shellcheck disable=SC2229  # see above
+    printf -v "$_field" '%s' "$_val"
+done
+unset _field _val
+
 [ -n "${LANG_OVERRIDE:-}" ] && load_language "$LANG_OVERRIDE"
 
 WM_CLASS="rdp-${PROFILE}"
@@ -266,6 +284,11 @@ log_event "INFO" "=================== INICIO DE SESIÓN RDP ==================="
 log_event "INFO" "Perfil: $PROFILE | Host: $HOST | Usuario: $USER_RDP"
 
 # --- PRE-FLIGHT CHECK (Vía socket nativo /dev/tcp) ---
+# T2.6: VPN_CHECK is trimmed right after parse_env_safe (line ~167), so "  " or
+# "  host  " in the profile becomes "" or "host" respectively. The guard below
+# then correctly treats empty (no VPN configured) as SKIP, and a real host as
+# ENTER. Without the trim, "  " passed `-n` and produced "VPN requerida ( )
+# inalcanzable" on every invocation.
 if [ -n "${VPN_CHECK:-}" ]; then
     log_event "INFO" "Verificando VPN ($VPN_CHECK)..."
     if ! timeout 2 bash -c "</dev/tcp/$VPN_CHECK/3389" &>/dev/null; then

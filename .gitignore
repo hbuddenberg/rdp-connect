@@ -1,0 +1,18 @@
+# Credenciales y perfiles reales (nunca commitear)
+profiles/*.env
+!profiles/*.env.example
+
+# Estado runtime
+*.log
+*.pid
+.local/state/
+
+# OpenSpec artifacts (se deciden por cambio)
+# openspec/  # descomentar si querés ignorar artifacts SDD
+
+# Editores
+*.swp
+*.swo
+.DS_Store
+.idea/
+.vscode/

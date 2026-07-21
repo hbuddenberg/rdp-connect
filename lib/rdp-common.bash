@@ -166,3 +166,42 @@ compute_dpi_flags() {
     log_event "INFO" "HiDPI scale ${raw} -> /scale-desktop:${SCALE_PCT}."
   fi
 }
+
+# ---------------------------------------------------------------------------
+# F6 — require_cmd: startup dependency preflight
+# ---------------------------------------------------------------------------
+# require_cmd <name> [pkg_hint]
+#
+# Exits 127 with a clear message if <name> is not on PATH. The optional
+# pkg_hint names the package the user should install. Called by the engine
+# at startup — before any profile is loaded — so a missing binary never
+# reaches a credential-adjacent code path.
+require_cmd() {
+  local cmd="$1" pkg="${2:-$1}"
+  if ! command -v "$cmd" &>/dev/null; then
+    printf 'missing required command: %s (install via your package manager, e.g. %s)\n' \
+      "$cmd" "$pkg" >&2
+    exit 127
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# F8 — build_mon_flags: array-based monitor flags
+# ---------------------------------------------------------------------------
+# build_mon_flags <count> <ids>
+#
+# Sets MON_FLAGS[] as a bash array:
+#   count > 1 → ("/multimon" "/monitors:<ids>")
+#   count ≤ 1 → ("/f")
+# Always initializes the array (never unset) so "${MON_FLAGS[@]-}" expands
+# cleanly under set -u.
+build_mon_flags() {
+  local count="$1" ids="$2"
+  MON_FLAGS=()
+  if [ "$count" -gt 1 ]; then
+    MON_FLAGS=("/multimon" "/monitors:$ids")
+  else
+    # shellcheck disable=SC2034  # MON_FLAGS consumed by engine/rdp-connect (sourced lib pattern)
+    MON_FLAGS=("/f")
+  fi
+}

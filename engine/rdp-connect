@@ -209,11 +209,30 @@ cleanup() {
     if [ $EXIT_CODE -ne 0 ]; then
         # F9: guard LOG_FILE access — early exits (require_cmd failure, parse
         # error) may fire the trap before any log line is written. The [ -f ]
-        # check prevents a "No such file" diagnostic; the || true on grep
-        # handles the no-match case (grep exits 1 on no match under pipefail).
+        # check prevents a "No such file" diagnostic; the || true on the
+        # extractor handles the no-match case.
+        #
+        # T2.5 (Bug B): scope the error search to the CURRENT session only.
+        # The SESSION_START marker (pid=$$) written as the first log line of
+        # this session bounds the awk scan — without it, the old `tail -n 15`
+        # would surface stale ERROR lines from PREVIOUS sessions in the same
+        # per-profile LOG_FILE as if they were this session's failure cause
+        # (e.g. an old "VPN requerida inalcanzable" from days ago reported
+        # as the cause of a fresh parse/preflight failure).
+        #
+        # The pid= suffix on the marker makes it unique to THIS process so
+        # concurrent sessions on the same profile (impossible under flock but
+        # defensive) cannot cross-pollinate. If no SESSION_START marker for
+        # our PID exists (e.g. trap fired before the first log_event call),
+        # nothing is captured — the caller falls back to the generic
+        # 'Ver log en $LOG_FILE' message, which is correct.
         LAST_ERROR=""
-        if [ -f "$LOG_FILE" ]; then
-            LAST_ERROR=$(tail -n 15 "$LOG_FILE" | grep -iE "error|failed|status|connect" | tail -n 1 || true)
+        if [ -f "$LOG_FILE" ] && [ -n "${START_TIME:-}" ]; then
+            LAST_ERROR=$(awk -v pid="$$" '
+                $0 ~ /\[SESSION_START\]/ && $0 ~ "pid="pid"([^0-9]|$)" { found=1; next }
+                found && tolower($0) ~ /error|failed|status|connect/ { last=$0 }
+                END { if (last) print last }
+            ' "$LOG_FILE" || true)
         fi
         log_event "ERROR" "Sesión finalizada con error (Código $EXIT_CODE). Duración: ${DURATION}s."
         log_event "ERROR" "Causa reportada: ${LAST_ERROR:-Error no especificado}"
@@ -234,6 +253,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# T2.5 (Bug B): SESSION_START marker is the FIRST log line of this session.
+# cleanup() uses it to scope its error diagnostic to the CURRENT session only
+# — preventing stale ERROR lines from previous sessions (same per-profile
+# LOG_FILE) from being reported as this session's failure cause. The pid=
+# suffix makes the marker unique to this PID so concurrent sessions on the
+# same profile (impossible under flock but defensive) can't cross-pollinate.
+# This MUST be the first log_event call so any later failure (VPN check, host
+# check, xfreerdp3) has a bounded "current session" window to scan.
+log_event "SESSION_START" "pid=$$ profile=$PROFILE"
 log_event "INFO" "=================== INICIO DE SESIÓN RDP ==================="
 log_event "INFO" "Perfil: $PROFILE | Host: $HOST | Usuario: $USER_RDP"
 

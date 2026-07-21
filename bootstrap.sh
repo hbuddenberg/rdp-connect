@@ -107,12 +107,10 @@ cat <<EOF
   Logs        : ~/.local/state/rdp/<profile>.log
 
 Next steps:
-  1. Edit a profile:  \$EDITOR ~/.config/rdp/profiles/partner.env
-  2. Connect:         rdp-connect partner
-  3. Graphical menu:  rdp-connect
-
-  Or create a new profile:
-                     rdp-connect --new <name>
+  1. Create a profile:  rdp-connect --new myserver
+  2. Edit credentials:  \$EDITOR ~/.config/rdp/profiles/myserver.env
+  3. Connect:           rdp-connect myserver
+  4. Graphical menu:    rdp-connect
 
 Installed from: $REPO @ $HEAD_SHA (ref=$REF)
 

@@ -1,0 +1,7 @@
+HOST=server.example.com
+USER_RDP=user
+PASS_RDP=secret
+DOMAIN=
+VPN_CHECK=
+PREFERRED_WS=
+LANG_OVERRIDE=

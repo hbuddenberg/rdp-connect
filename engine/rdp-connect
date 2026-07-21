@@ -168,22 +168,18 @@ parse_env_safe "$ENV_FILE" profile || {
     exit 1
 }
 
-# T2.6: Trim leading/trailing whitespace from network-identifier fields so
+# T2.1: Trim leading/trailing whitespace from network-identifier fields so
 # `VPN_CHECK=" "`, `VPN_CHECK="  10.8.0.1  "`, or `HOST="  server  "` (common
 # copy-paste / editor mistakes) don't silently corrupt the TCP probes.
 # PASS_RDP is intentionally NOT trimmed — passwords MAY legitimately contain
 # leading/trailing spaces. USER_RDP also left untouched for the same reason.
-# Idiom: ${v#"${v%%[![:space:]]*}"} strips leading ws, ${v%"${v##*[![:space:]]}"}
-# strips trailing ws (parameter expansion only — no subshell, no set -e trap).
-for _field in HOST VPN_CHECK DOMAIN PREFERRED_WS LANG_OVERRIDE; do
-    # shellcheck disable=SC2229  # dynamic var name is intentional; values come from a fixed allowlist
-    _val="${!_field}"
-    _val="${_val#"${_val%%[![:space:]]*}"}"
-    _val="${_val%"${_val##*[![:space:]]}"}"
-    # shellcheck disable=SC2229  # see above
-    printf -v "$_field" '%s' "$_val"
-done
-unset _field _val
+#
+# T2.6 (engine-security-delta R1): the trim allowlist (5 trimmed + 2 excluded)
+# MUST live in exactly one place — lib/rdp-common.bash::trim_profile_fields —
+# so drift between consumers is impossible. The inline parameter-expansion
+# idiom was lifted verbatim into the lib fn; the engine now delegates so the
+# bats suite tests the REAL trim, not a reimplementation.
+trim_profile_fields
 
 [ -n "${LANG_OVERRIDE:-}" ] && load_language "$LANG_OVERRIDE"
 

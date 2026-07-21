@@ -43,19 +43,16 @@ test:
 	bats $(TESTS_DIR)/
 
 # Static analysis. shellcheck exits non-zero on any warning. tests/fixtures/
-# is excluded (golden files are data, not source). NOTE: the tests/*.sh glob
-# covers the legacy probe scripts that still ship in PR1; PR2 task T2.7
-# deletes them and MUST narrow this glob to tests/*.bash only at that time.
+# is excluded (golden files are data, not source).
 #
-# `$(wildcard ...)` (make-parse-time expansion) is used for tests/*.sh and
-# tests/*.bash so the target stays lint-clean during PR1's transitional state
-# (only one of the two globs is populated at any point: test_helper.bash lands
-# at T1.3, the probe .sh files are deleted at T2.7). A literal glob with no
-# match would hand the unexpanded string to shellcheck and fail with "file
-# not found" — see apply-progress deviation note for T1.1.
+# Lint glob: tests/*.bash (test_helper.bash). The 4 legacy probe scripts
+# (tests/{parser,hidpi,pid-path,vpn-trim}-probe.sh) were superseded by
+# their .bats counterparts in PR2 task T2.7 and deleted; the tests/*.sh
+# glob is no longer needed. The .bats files themselves are NOT in the lint
+# glob — they use the bats `@test` DSL which shellcheck does not parse.
 lint:
 	shellcheck --severity=warning engine/rdp-connect lib/*.bash install-rdp-framework.sh bootstrap.sh \
-	           $(wildcard tests/*.sh) $(wildcard tests/*.bash)
+	           $(wildcard tests/*.bash)
 
 # Idempotent install. Delegates to the installer with no other side effect.
 install:

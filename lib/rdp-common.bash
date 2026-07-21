@@ -22,7 +22,15 @@
 # Keys accepted in profile files (~/.config/rdp/profiles/*.env). Any key
 # outside this set is rejected by parse_env_safe before any assignment.
 # Mode 'i18n' accepts keys matching the MSG_* prefix instead.
-declare -A _PROFILE_KEYS=(
+#
+# `declare -gA` (global associative array) instead of `declare -A`: when this
+# file is sourced at top level (engine L45) the two forms are equivalent.
+# When sourced inside a function context (bats `load` chains: every tests/*.bats
+# `load test_helper` -> test_helper.bash `source "$LIB_FILE"` happens inside a
+# bats-injected function frame), plain `declare -A` would scope the array
+# LOCALLY to that frame and the allowlist would be empty by the time @test
+# bodies run. `-g` forces global scope regardless of the source depth.
+declare -gA _PROFILE_KEYS=(
   [HOST]=1
   [USER_RDP]=1
   [PASS_RDP]=1
@@ -142,6 +150,38 @@ parse_env_safe() {
     fi
     printf -v "$key" '%s' "$value"                       # key is charset+allowlist validated; format is literal %s → no execution of profile content
   done < "$file"
+}
+
+# ---------------------------------------------------------------------------
+# T2.1 — Post-parse whitespace trim for network-identifier fields
+# ---------------------------------------------------------------------------
+# trim_profile_fields
+#
+# Mutates the 5 network-identifier fields IN PLACE via printf -v: HOST,
+# VPN_CHECK, DOMAIN, PREFERRED_WS, LANG_OVERRIDE. Uses the parameter-expansion
+# trim idiom (no subshell, no set -e trap). NEVER touches PASS_RDP or
+# USER_RDP — credentials MAY legally contain surrounding whitespace; the
+# allowlist (5 trimmed, 2 excluded) is enforced by the loop list, NOT by
+# conditional logic, so an accidental widening is impossible without editing
+# this function (security-critical invariant — see engine-security spec).
+#
+# Caller contract: the 5 globals MUST already be set (by parse_env_safe or
+# pre-init). The function does NOT take arguments and returns nothing.
+#
+# Extraction provenance: verbatim lift of engine/rdp-connect L178-186 (the
+# `for _field in HOST VPN_CHECK DOMAIN PREFERRED_WS LANG_OVERRIDE` block).
+# Parity is reverified by tests/vpn-trim.bats::trim_profile_fields_byte_identical_on_fixtures
+# and by tests/engine-security.bats::trim_allowlist_is_five_trimmed_two_excluded.
+trim_profile_fields() {
+  local _field _val
+  for _field in HOST VPN_CHECK DOMAIN PREFERRED_WS LANG_OVERRIDE; do
+    # shellcheck disable=SC2229  # dynamic var name; values come from parse_env_safe allowlist
+    _val="${!_field}"
+    _val="${_val#"${_val%%[![:space:]]*}"}"   # strip leading whitespace
+    _val="${_val%"${_val##*[![:space:]]}"}"   # strip trailing whitespace
+    # shellcheck disable=SC2229  # see above
+    printf -v "$_field" '%s' "$_val"          # indirect write to global
+  done
 }
 
 # ---------------------------------------------------------------------------

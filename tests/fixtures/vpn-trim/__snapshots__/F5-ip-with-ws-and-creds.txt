@@ -1,0 +1,7 @@
+HOST=10.8.0.1
+USER_RDP=  corpuser
+PASS_RDP=  s3cret with spaces
+DOMAIN=
+VPN_CHECK=10.8.0.1
+PREFERRED_WS=
+LANG_OVERRIDE=

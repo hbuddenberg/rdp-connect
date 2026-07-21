@@ -6,6 +6,13 @@
 # security-relevant call (per engine-robustness-delta R2 mitigation).
 set -euo pipefail
 
+# multi-peer-race (F-G fix part 1): become the process-group leader so the
+# EXIT trap can `kill -- -$$` to reap child processes (xfreerdp3). setpgid
+# 0 0 puts the calling process into a NEW pgid == $$. Children spawned
+# after this inherit the pgid. `|| true` because some environments (e.g.
+# already-a-group-leader) error harmlessly.
+setpgid 0 0 || true
+
 # --- MODO AYUDA: rdp-connect --help / -h ---
 # MUST be the FIRST arg-handling block. Runs BEFORE require_cmd (F6) AND before
 # the lib source / mkdir setup so `--help` is a pure documentation path that
@@ -221,6 +228,13 @@ echo "$$" >&200
 # --- CLEANUP TRAP & DIAGNÓSTICO ---
 cleanup() {
     EXIT_CODE=$?
+    # multi-peer-race (F-G fix part 2): reap the engine's process group BEFORE
+    # any logging. Children (xfreerdp3) get killed first so they don't outlive
+    # the engine. `kill -- -$$` sends to all processes in pgid == $$ (the
+    # engine is the leader thanks to setpgid at startup). `--` guards against
+    # $$ looking like a flag (e.g. SIGHUP if -1). `2>/dev/null || true` because
+    # kill on already-dead processes returns non-zero.
+    kill -- -$$ 2>/dev/null || true
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
 
@@ -255,15 +269,28 @@ cleanup() {
         log_event "INFO" "Sesión finalizada correctamente. Duración total: ${DURATION}s."
         notify-send -i display-off "RDP $PROFILE" "$MSG_SESSION_ENDED" || true
     fi
-    # Multi-peer race fix (T1.4 discovery): only the lock owner unlinks the PID
-    # file. A peer that failed flock -n does NOT own the lock — unlinking the
-    # file would break the first instance's per-inode flock and allow a third
-    # instance to bypass it. Belt-and-suspenders: the trap is registered after
-    # the flock block, so _LOCK_ACQUIRED is true by the time cleanup can fire;
-    # the check protects against future refactors that move the trap earlier.
-    if [ "${_LOCK_ACQUIRED:-false}" = true ] && [ -f "$PID_FILE" ]; then
-        rm -f "$PID_FILE"
-    fi
+    # multi-peer-race (F-G fix part 3): do NOT unlink $PID_FILE.
+    # The previous code (baseline-hardening T1.4 + T2.2 _LOCK_ACQUIRED guard)
+    # closed the ORIGINAL T1.4 race (peer-branch triggering cleanup), but
+    # the exploration for this change found a DIFFERENT race (R7): when a
+    # signal (SIGTERM, SIGINT) fires the EXIT trap while fd 200 still holds
+    # the inode lock, unlinking the path leaves the inode anonymous but
+    # locked. A third process opening $PID_FILE creates a NEW inode at the
+    # same path; its flock -n succeeds on the new inode → two concurrent
+    # xfreerdp3 sessions against the same profile. Reproduced empirically
+    # in openspec/changes/multi-peer-race/explore.md.
+    #
+    # Fix: never unlink. Kernel releases flock on process death; the path
+    # persists benignly in $XDG_RUNTIME_DIR; next start's `exec 200>` +
+    # `flock -n` reclaims a stale lockfile automatically.
+    #
+    # Spec amendment: openspec/specs/instance-locking/spec.md will be
+    # updated at /sdd-archive to invert the "EXIT trap MUST remove" rule.
+    # The canonical amendment is deferred to archive per SDD convention.
+    #
+    # `_LOCK_ACQUIRED` is kept for diagnostic purposes (logging) but no
+    # longer gates any file operation.
+    :
 }
 trap cleanup EXIT
 

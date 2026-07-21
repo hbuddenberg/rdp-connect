@@ -55,24 +55,40 @@ _reject() {
 # Mode 'i18n': only keys matching the MSG_* prefix are accepted.
 #
 # Value normalization by leading character:
-#   double-quote  → strip outer quotes; interior '#' preserved verbatim
-#   single-quote  → strip outer quotes; interior '#' preserved verbatim
-#   unquoted      → strip trailing ' # comment' (whitespace-then-#), trim ws
+#   double-quote  → strip outer quotes; interior '#' preserved verbatim;
+#                   tolerate trailing whitespace + optional `# comment` after
+#                   the closing quote (T2.4: also tolerates CRLF line endings).
+#   single-quote  → same as double-quote.
+#   unquoted      → strip trailing ' # comment' (whitespace-then-#), trim ws.
+#
+# CRLF tolerance (T2.4): a trailing `\r` left by Windows-style `\r\n` line
+# endings is stripped at the top of the loop, BEFORE any value inspection.
+# Without this, `VPN_CHECK=""\r` was misreported as "unterminated quote".
 #
 # Augmentation beyond design.md (per task T1.2 prompt): an unquoted value
 # containing '#' WITHOUT preceding whitespace (e.g. `KEY=value# x`) is
 # rejected — it is ambiguous (typo'ed comment delimiter or leaky quote) and
 # silently truncating it to `value#` would corrupt the data. Forces the user
 # to be explicit. See apply-progress T1.2 deviations note.
+#
+# T2.4 diagnostic improvement: unterminated quotes and unexpected trailing
+# content both include a 40-char sanitized preview of the offending raw value
+# so users can see invisible whitespace / CRLF / stray characters.
 parse_env_safe() {
-  local file="$1" mode="${2:-profile}" line key raw value lineno=0 q
+  local file="$1" mode="${2:-profile}" line key raw value lineno=0 q rest closing_part tail
   # shellcheck disable=SC2094  # _reject writes stderr only; $file is read-only input
   while IFS= read -r line || [ -n "$line" ]; do
     lineno=$((lineno+1))
-    line="${line#"${line%%[![:space:]]*}"}"           # trim leading whitespace
-    [[ -z "$line" || "$line" == \#* ]] && continue    # blank / full-line comment
+    # T2.4: strip a trailing CR left by CRLF line endings (Windows-edited or
+    # clipboard-mangled profiles). `read -r` on Linux splits on LF only, so a
+    # CRLF file leaves a literal \r at the end of `line`. Without this strip,
+    # `VPN_CHECK=""\r` failed the old "raw ends with quote" check and was
+    # misreported as "unterminated quote".
+    line="${line%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"              # trim leading whitespace
+    [[ -z "$line" || "$line" == \#* ]] && continue       # blank / full-line comment
     [[ "$line" != *=* ]] && { _reject "$file" "$lineno" "no '=' delimiter"; return 1; }
-    key="${line%%=*}"; raw="${line#*=}"                # split on FIRST '=' → preserves '=' in passwords
+    key="${line%%=*}"; raw="${line#*=}"                  # split on FIRST '=' → preserves '=' in passwords
     [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { _reject "$file" "$lineno" "invalid key '$key'"; return 1; }
     # allowlist BEFORE any assignment (spec: "no printf -v on unknown keys")
     # NOTE: `-v` (is-set) test, NOT `${arr[$k]}` — under `set -u` a missing assoc
@@ -89,8 +105,32 @@ parse_env_safe() {
     else q=                                              # unquoted
     fi
     if [[ -n "$q" ]]; then
-      [[ "$raw" != *"$q" ]] && { _reject "$file" "$lineno" "unterminated quote"; return 1; }
-      value="${raw:1:${#raw}-2}"                         # strip outer quotes; interior '#' preserved verbatim
+      # T2.4: quoted-value handling. The OLD logic required `raw` to END with
+      # the quote char, which misrejected legitimately-terminated values that
+      # had trailing whitespace, a CRLF, or an inline `# comment` after the
+      # closing quote — all reported as the misleading "unterminated quote".
+      #
+      # New approach: find the FIRST closing quote (so a '#' inside the quoted
+      # value like PASS_RDP="p# x" is preserved verbatim), then validate that
+      # whatever FOLLOWS the closing quote is empty, whitespace-only, or
+      # whitespace + `# comment`. Anything else is rejected with a clearer
+      # message naming the offending tail.
+      rest="${raw:1}"                                    # raw minus the leading quote
+      closing_part="${rest%%"$q"*}"                      # text before the first closing quote
+      if [[ "$closing_part" == "$rest" ]]; then
+        # No closing quote anywhere on the line → genuinely unterminated.
+        # Include a 40-char sanitized preview of the raw value so the user can
+        # SEE what's wrong (invisible whitespace / CRLF is otherwise hidden).
+        _reject "$file" "$lineno" "unterminated quote (raw: '${raw:0:40}')"
+        return 1
+      fi
+      value="$closing_part"
+      tail="${rest#*"$q"}"                               # what follows the first closing quote
+      # tail MUST be empty, whitespace-only, or whitespace + `# comment`.
+      if [[ -n "$tail" && ! "$tail" =~ ^[[:space:]]*(#.*)?$ ]]; then
+        _reject "$file" "$lineno" "unexpected content after closing quote: '${tail:0:40}'"
+        return 1
+      fi
     else
       # augmentation: reject unquoted '#' without preceding whitespace
       if [[ "$raw" == *#* && "$raw" != *[[:space:]]#* ]]; then

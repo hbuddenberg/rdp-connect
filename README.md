@@ -127,6 +127,46 @@ Any key outside this allowlist is rejected with `parse_env_safe: <file>:<line>: 
 | Debian + derivatives (Ubuntu, Mint, Pop) | apt | ✅ (hyprland manual — not in Debian main) |
 | Alpine, NixOS, others | — | ❌ Manual install only (installer exits non-zero with a 3-manager reference) |
 
+## Testing
+
+The bats test suite and `shellcheck` lint are **dev dependencies only** — the installer does NOT install them (runtime needs only the binaries listed in Requirements). CI runs `make ci` (= `lint test`) on every push and pull_request.
+
+### Install bats-core + assertion libraries
+
+bats-core 1.5.0+ is the floor (enforced at load by `tests/test_helper.bash`). The test helper also loads **bats-support** and **bats-assert** (separate repos / packages — `assert_success`, `assert_output`, `assert_equal` are not built-in to bats-core).
+
+| Distro | bats-core | bats-support + bats-assert |
+|---|---|---|
+| Arch | `sudo pacman -S bats` | (not in pacman — install from source, see below) |
+| Ubuntu / Debian | `sudo apt-get install -y bats` | `sudo apt-get install -y bats-support bats-assert` |
+| Fedora | `sudo dnf install -y bats` | `sudo dnf install -y bats-support bats-assert` |
+| Any (source) | `git clone https://github.com/bats-core/bats-core && ./bats-core/install.sh ~/.local` | see below |
+
+Source install of the assertion libraries (for Arch and any distro without packaged versions):
+
+```bash
+mkdir -p ~/.local/lib/bats
+git clone https://github.com/bats-core/bats-support ~/.local/lib/bats/bats-support
+git clone https://github.com/bats-core/bats-assert  ~/.local/lib/bats/bats-assert
+```
+
+`tests/test_helper.bash` searches these locations in order: `$BATS_LIB_PATH`, `/usr/lib/bats`, `~/.local/lib/bats`. Set `BATS_LIB_PATH` if you install elsewhere.
+
+### Run the suite
+
+```bash
+make test    # bats tests/
+make lint    # shellcheck --severity=warning over engine + lib + installer + bootstrap + tests/*.{sh,bash}
+make ci      # lint + test (what GitHub Actions runs)
+make smoke   # install + throwaway-HOME rdp-connect --help (no xfreerdp3 needed)
+```
+
+The smoke target works on a host without `xfreerdp3` / `hyprctl` because `rdp-connect --help` exits 0 (engine L40) BEFORE `require_cmd xfreerdp3` (engine L47) runs — the same reason CI does not need to mock those binaries.
+
+### SDD context
+
+This test harness is being built up incrementally under the `strict-tdd-enable` change. See **[`openspec/changes/strict-tdd-enable/`](openspec/changes/strict-tdd-enable/)** for the proposal, design, and task breakdown. PR1 lands the tooling (Makefile + CI + helper + this README section); PR2 migrates the 46 probe scenarios to `*.bats`; PR3 extracts two pure functions from the engine and flips `strict_tdd: true`.
+
 ## Specifications
 
 The capability contracts that govern this project live under **[`openspec/specs/`](openspec/specs/)** — they are the source of truth for what the engine, installer, and supporting modules MUST do. Every change to behavior flows through the SDD cycle (explore → propose → spec → design → tasks → apply → verify → archive) tracked under `openspec/changes/`. Completed changes are archived under `openspec/changes/archive/`.

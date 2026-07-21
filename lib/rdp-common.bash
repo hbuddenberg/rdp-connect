@@ -119,3 +119,50 @@ parse_env_safe() {
 compute_pid_path() {
   printf '%s/rdp-%s-%s.pid' "${XDG_RUNTIME_DIR:-/tmp}" "$1" "$(id -u)"
 }
+
+# ---------------------------------------------------------------------------
+# F1 — jq-native HiDPI scale math (replaces bc + python3)
+# ---------------------------------------------------------------------------
+# compute_dpi_flags
+#
+# Reads `.[0].scale` from `hyprctl monitors -j` via a SINGLE jq invocation and
+# sets three globals:
+#   DPI_FLAGS   — bash array, empty under 100%, else (/scale-desktop:N /smart-sizing)
+#   IS_HIDPI    — "1" if scale > 1, else "0"
+#   SCALE_PCT   — integer percentage (e.g. 150 for scale 1.5)
+#
+# Null / missing / non-numeric / malformed-JSON scale → IS_HIDPI=0 SCALE_PCT=100
+# with a WARN log line naming the unparsable value. The engine MUST NOT abort
+# on a scale-parse failure (spec: "Safe fallback when scale cannot be determined").
+#
+# jq notes:
+#   - `tonumber` on null/missing/non-numeric throws → caught by `try/catch` →
+#     lands in the WARN fallback branch. This is deliberately NOT using jq's `//`
+#     alternative operator, which would silently substitute for null/missing and
+#     mask the very "unparsable" case the spec requires to emit a WARN.
+#   - `$n*100|round` produces the integer percentage without bc or python3.
+compute_dpi_flags() {
+  local raw scale_valid out
+  IS_HIDPI=0
+  SCALE_PCT=100
+  DPI_FLAGS=()
+  out=$(hyprctl monitors -j 2>/dev/null | jq -r '
+      .[0].scale as $raw
+    | (try ($raw | tonumber) catch null) as $n
+    | if $n == null then "0\t100\tinvalid\t\($raw)"
+      else (if $n > 1 then "1" else "0" end)
+        + "\t" + (($n * 100) | round | tostring)
+        + "\tvalid\t\($raw)"
+      end
+  ' 2>/dev/null) || out=""
+  IFS=$'\t' read -r IS_HIDPI SCALE_PCT scale_valid raw <<<"$out"
+  if [[ "$scale_valid" != "valid" ]]; then
+    IS_HIDPI=0
+    SCALE_PCT=100
+    log_event "WARN" "unparsable monitor scale '${raw:-<missing>}'; defaulting to 100%"
+  elif [[ "$IS_HIDPI" == "1" ]]; then
+    # shellcheck disable=SC2034  # DPI_FLAGS consumed by engine/rdp-connect (sourced lib pattern)
+    DPI_FLAGS=("/scale-desktop:${SCALE_PCT}" "/smart-sizing")
+    log_event "INFO" "HiDPI scale ${raw} -> /scale-desktop:${SCALE_PCT}."
+  fi
+}

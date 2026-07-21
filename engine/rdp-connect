@@ -180,14 +180,11 @@ if ! timeout 2 bash -c "</dev/tcp/$HOST/3389" &>/dev/null; then
 fi
 log_event "INFO" "Puerto 3389 en $HOST respondiendo correctamente."
 
-# --- HIDPI AUTO-SCALING ---
-SCALE=$(hyprctl monitors -j | jq -r '.[0].scale // 1.0')
-DPI_FLAGS=""
-if (( $(echo "$SCALE > 1.0" | bc -l 2>/dev/null || echo "0") )); then
-    SCALE_PCT=$(python3 -c "print(int($SCALE * 100))" 2>/dev/null || echo "100")
-    DPI_FLAGS="/scale-desktop:$SCALE_PCT /smart-sizing"
-    log_event "INFO" "Escalado HiDPI detectado ($SCALE). Aplicando /scale-desktop:$SCALE_PCT."
-fi
+# --- HIDPI AUTO-SCALING (F1: jq-native, no bc/python3) ---
+# compute_dpi_flags lives in lib/rdp-common.bash. It sets DPI_FLAGS[] (array),
+# IS_HIDPI, and SCALE_PCT via a single `hyprctl monitors -j | jq` call.
+# Null / missing / non-numeric scale → WARN + 100% fallback (session proceeds).
+compute_dpi_flags
 
 # --- MULTI-MONITOR Y REGLAS DE HYPRLAND ---
 MONITORS=$(hyprctl monitors -j | jq -r '.[].id' | paste -sd, -)
@@ -218,7 +215,7 @@ echo "$PASS_RDP" | xfreerdp3 \
   /sec:nla \
   /cert:tofu \
   $MON_FLAGS \
-  $DPI_FLAGS \
+  "${DPI_FLAGS[@]}" \
   +grab-keyboard \
   /async-input \
   /async-update \

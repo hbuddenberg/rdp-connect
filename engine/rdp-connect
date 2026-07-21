@@ -16,10 +16,18 @@ mkdir -p "$LOG_DIR" "$SHARE_DIR"
 source "$LIB_FILE"
 
 # --- DETECCIÓN Y CARGA DE IDIOMA (i18n) ---
+# Cargado a través del parser endurecido (F2: no `source`). El modo `i18n`
+# acepta solo claves con prefijo MSG_*; cualquier otra clave (p.ej. PATH=)
+# aborta el motor — un archivo i18n hostil es un evento de seguridad, no un
+# fallback silencioso.
 load_language() {
     local target_lang="${1:-${LANG:0:2}}"
     local lang_file="$I18N_DIR/${target_lang}.env"
-    [ -f "$lang_file" ] && source "$lang_file" || source "$I18N_DIR/es.env"
+    [ -f "$lang_file" ] || lang_file="$I18N_DIR/es.env"
+    parse_env_safe "$lang_file" i18n || {
+        notify-send -u critical "RDP Error" "Diccionario de idioma inválido ($lang_file). Ver consola." 2>/dev/null || true
+        exit 1
+    }
 }
 load_language
 

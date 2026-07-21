@@ -37,22 +37,22 @@ Chain strategy: stacked-to-main
    - Deps: none. Size: ~570 (≈480 verbatim move → `size:exception` candidate).
    - [x] manual-verification: installer → **Engine is copied, not heredoc-generated** (`diff -q engine/rdp-connect ~/.local/bin/rdp-connect` clean; no `cat <<` for engine/i18n/template deployment) — PASS @ fa2b10e
 
-- [ ] **T1.2** `fix(security): harden parse_env_safe with allowlist and quote/comment handling` — F3 (design commit 2)
-  - Files: `lib/rdp-common.bash` (`parse_env_safe` full impl incl. `i18n` MSG_* mode), `engine/rdp-connect` (`source <profile>` → `parse_env_safe "$f" profile`), `tests/parser-probe.sh` (rejects `PATH=/x`).
-  - Deps: T1.1. Size: ~80.
-  - [ ] manual-verification: engine-security → **Dangerous key in profile is rejected**
-  - [ ] manual-verification: engine-security → **Unknown non-allowlisted key is rejected**
-  - [ ] manual-verification: engine-security → **All allowlisted keys accepted**
-  - [ ] manual-verification: engine-security → **Inline comment inside double-quoted value is preserved**
-  - [ ] manual-verification: engine-security → **Trailing comment after unquoted value is stripped**
-  - [ ] manual-verification: engine-security → **Single-quoted value is unquoted**
-  - [ ] manual-verification: engine-security → **Malformed line aborts parsing**
+- [x] **T1.2** `fix(security): harden parse_env_safe with allowlist and quote/comment handling` — F3 (design commit 2)
+   - Files: `lib/rdp-common.bash` (`parse_env_safe` full impl incl. `i18n` MSG_* mode), `engine/rdp-connect` (`source <profile>` → `parse_env_safe "$f" profile`), `tests/parser-probe.sh` (rejects `PATH=/x`).
+   - Deps: T1.1. Size: ~80.
+   - [x] manual-verification: engine-security → **Dangerous key in profile is rejected** — PASS @ F1 fixture + engine integration (PATH= exit 1, ambient PATH intact)
+   - [x] manual-verification: engine-security → **Unknown non-allowlisted key is rejected** — PASS @ F2 fixture (FOO= rejected)
+   - [x] manual-verification: engine-security → **All allowlisted keys accepted** — PASS @ F3 fixture (all 7 keys → rc=0)
+   - [x] manual-verification: engine-security → **Inline comment inside double-quoted value is preserved** — PASS @ F4 fixture (HOST="server # production" preserved verbatim)
+   - [x] manual-verification: engine-security → **Trailing comment after unquoted value is stripped** — PASS @ F5 fixture (PREFERRED_WS=3  # x → "3")
+   - [x] manual-verification: engine-security → **Single-quoted value is unquoted** — PASS @ F6 fixture (DOMAIN='MicrosoftAccount' → "MicrosoftAccount")
+   - [x] manual-verification: engine-security → **Malformed line aborts parsing** — PASS @ F7 fixture (no-= line → rc=1)
 
-- [ ] **T1.3** `fix(security): route i18n through hardened parser (no source)` — F2 (design commit 3)
-  - Files: `engine/rdp-connect` (`load_language`: `source .../$LANG.env` → `parse_env_safe ... i18n`).
-  - Deps: **T1.2** (F3 BLOCKS F2 — the `i18n` MSG_* glob must exist before this call site changes). Size: ~15.
-  - [ ] manual-verification: engine-security → **i18n file with injected key is rejected** (`grep -nE 'source[[:space:]]+.*\.env' ~/.local/bin/rdp-connect` empty)
-  - [ ] manual-verification: engine-security → **Legitimate MSG_* keys load**
+- [x] **T1.3** `fix(security): route i18n through hardened parser (no source)` — F2 (design commit 3)
+   - Files: `engine/rdp-connect` (`load_language`: `source .../$LANG.env` → `parse_env_safe ... i18n`).
+   - Deps: **T1.2** (F3 BLOCKS F2 — the `i18n` MSG_* glob must exist before this call site changes). Size: ~15.
+   - [x] manual-verification: engine-security → **i18n file with injected key is rejected** (`grep -nE 'source[[:space:]]+.*\.env' ~/.local/bin/rdp-connect` empty) — PASS @ engine source + deployed engine both clean; hostile es.env aborts engine exit 1
+   - [x] manual-verification: engine-security → **Legitimate MSG_* keys load** — PASS @ deployed es.env probe (MSG_PROMPT_SELECT/CONNECTING/NEW_NO_EDITOR populated, rc=0)
 
 - [ ] **T1.4** `fix(lock): relocate PID to XDG_RUNTIME_DIR with uid suffix; clean new path on exit` — F5 (design commit 5)
   - Files: `lib/rdp-common.bash` (`compute_pid_path`), `engine/rdp-connect` (`PID_FILE` assignment, `flock -n` block, EXIT trap `rm -f` the new path; tolerate missing PID file on early exit).

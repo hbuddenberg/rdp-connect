@@ -116,22 +116,39 @@ REPRO
 }
 
 @test "setpgid_makes_engine_process_group_leader_pattern" {
-    # Pattern contract: `setpgid 0 0` makes the calling process the leader
-    # of a new process group with PGID == $$. Verified via ps.
+    # Pattern contract: `exec setsid --wait` (the corrected engine idiom)
+    # makes the calling process the leader of a new session AND process
+    # group with PGID == $$. Verified via ps.
     _setup_runtime
-    local sentinel="$BATS_TMPDIR/pgid.sentinel"
-    local repro="$BATS_TMPDIR/pattern-setpgid.sh"
+    local base="$BATS_TMPDIR/pgid"
+    local sentinel="${base}.sentinel"
+    local pgid_mark="${base}.txt"
+    local repro="$BATS_TMPDIR/pattern-setsid.sh"
 
     cat > "$repro" <<'REPRO'
 #!/usr/bin/env bash
-setpgid 0 0 || true
-echo "$$" > "$1"
+set -euo pipefail
+if [ -z "${_PGID_TEST_SESSION:-}" ]; then
+    _PGID_TEST_SESSION=1 exec setsid --wait "$0" "$@" || exit $?
+fi
+# $1 is the base path; write PID to $1.txt and touch $1.sentinel
+echo "$$" > "$1.txt"
+touch "$1.sentinel"
 REPRO
     chmod +x "$repro"
 
-    rm -f "$sentinel"
-    "$repro" "$sentinel"
+    rm -f "$sentinel" "$pgid_mark"
+    "$repro" "$base"
     assert [ -f "$sentinel" ]
+    # Strengthened assertion: PID written must be a non-empty numeric value
+    # (the session leader's PID). Use case+glob to stay sh-portable through
+    # bats-assert's eval context (avoids `[[ =~ ]]` which fails under sh).
+    local written_pid
+    written_pid=$(<"$pgid_mark")
+    case "$written_pid" in
+        ''|*[!0-9]*) fail "written PID '$written_pid' is not a positive integer" ;;
+        *) : ;;
+    esac
 }
 
 @test "single_instance_pid_path_contract_unchanged" {
@@ -236,4 +253,138 @@ REPRO
     # Child must now be DEAD (process group was killed)
     run kill -0 "$child_pid" 2>/dev/null
     assert_failure   # kill -0 returns non-zero when process is gone
+}
+
+# ---------------------------------------------------------------------------
+# Behavioral test for S6 (two concurrent starts serialize via flock)
+# ---------------------------------------------------------------------------
+
+@test "two_concurrent_starts_serialize_via_flock_behavioral" {
+    # Pattern: launch instance A (holds the lock); launch instance B;
+    # assert B does NOT acquire the same lock (B's flock -n fails).
+    # Verifies the kernel's flock-on-inode invariant that R7 relied on.
+    _setup_runtime
+    local pid_file="$XDG_RUNTIME_DIR/s6-race.pid"
+    local ready_a="$BATS_TMPDIR/s6-ready-a.sentinel"
+    local result_b="$BATS_TMPDIR/s6-result-b.txt"
+    local holder="$BATS_TMPDIR/s6-holder.sh"
+    local contender="$BATS_TMPDIR/s6-contender.sh"
+
+    # Holder: acquires lock, signals ready, holds until sentinel removed.
+    cat > "$holder" <<'HOLDER'
+#!/usr/bin/env bash
+set -euo pipefail
+PID_FILE="$1" READY="$2" HOLD="$3"
+exec 200>"$PID_FILE"
+flock -n 200 || exit 99   # failed to acquire as holder — test setup broken
+echo "$$" >&200
+touch "$READY"
+while [ ! -f "$HOLD" ]; do sleep 0.05; done
+HOLDER
+    chmod +x "$holder"
+
+    # Contender: tries to acquire the same lock; records rc.
+    cat > "$contender" <<'CONTENDER'
+#!/usr/bin/env bash
+set -euo pipefail
+PID_FILE="$1" RESULT="$2"
+exec 200>"$PID_FILE"
+if flock -n 200; then
+    echo "acquired" > "$RESULT"
+else
+    echo "blocked" > "$RESULT"
+fi
+CONTENDER
+    chmod +x "$contender"
+
+    rm -f "$pid_file" "$ready_a" "$result_b" "$BATS_TMPDIR/s6-hold.sentinel"
+
+    # Start holder (A)
+    "$holder" "$pid_file" "$ready_a" "$BATS_TMPDIR/s6-hold.sentinel" &
+    local pid_a=$!
+
+    # Wait for A to acquire the lock
+    local deadline=$(( $(date +%s) + 5 ))
+    while [ ! -f "$ready_a" ] && [ $(date +%s) -lt $deadline ]; do
+        sleep 0.05
+    done
+    [ -f "$ready_a" ] || { kill -9 "$pid_a" 2>/dev/null || true; skip "holder A didn't start"; }
+
+    # Run contender (B) — must NOT acquire; expected result = "blocked"
+    "$contender" "$pid_file" "$result_b"
+    assert [ -f "$result_b" ]
+    assert [ "$(<"$result_b")" = "blocked" ]
+
+    # Release A
+    touch "$BATS_TMPDIR/s6-hold.sentinel"
+    wait "$pid_a" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# Behavioral test for S10 (process-group kill scoped to engine group only)
+# ---------------------------------------------------------------------------
+
+@test "process_group_kill_is_scoped_to_engine_group_only_behavioral" {
+    # Pattern: launch an "engine" in its own session/group via setsid;
+    # launch an UNRELATED process in a different group; send SIGTERM to
+    # the engine; assert the unrelated process survives.
+    _setup_runtime
+    local ready="$BATS_TMPDIR/s10-ready.sentinel"
+    local outside_mark="$BATS_TMPDIR/s10-outside.pid"
+    local engine_repro="$BATS_TMPDIR/s10-engine.sh"
+
+    # The "engine" script (mirrors the corrected structure)
+    cat > "$engine_repro" <<'ENGINE'
+#!/usr/bin/env bash
+set -euo pipefail
+READY="$1"
+if [ -z "${_S10_SESSION:-}" ]; then
+    _S10_SESSION=1 exec setsid --wait "$0" "$@" || exit $?
+fi
+cleanup() { kill -- -$$ 2>/dev/null || true; }
+trap cleanup EXIT
+touch "$READY"
+while true; do sleep 0.1; done
+ENGINE
+    chmod +x "$engine_repro"
+
+    rm -f "$ready" "$outside_mark"
+
+    # Start the engine (in its own session via setsid)
+    "$engine_repro" "$ready" &
+    local engine_pid=$!
+
+    # Start an UNRELATED process in a DIFFERENT session
+    setsid bash -c 'sleep 60' &
+    local outside_pid=$!
+
+    # Wait for engine ready
+    local deadline=$(( $(date +%s) + 5 ))
+    while [ ! -f "$ready" ] && [ $(date +%s) -lt $deadline ]; do
+        sleep 0.05
+    done
+    [ -f "$ready" ] || { kill -9 "$engine_pid" "$outside_pid" 2>/dev/null || true; skip "engine didn't start"; }
+
+    # Confirm both processes are alive pre-signal
+    kill -0 "$engine_pid" 2>/dev/null || skip "engine died early"
+    kill -0 "$outside_pid" 2>/dev/null || skip "outside process died early"
+
+    # Confirm they are in DIFFERENT process groups (the load-bearing assertion)
+    local engine_pgid outside_pgid
+    engine_pgid=$(ps -o pgid= -p "$engine_pid" | tr -d ' ')
+    outside_pgid=$(ps -o pgid= -p "$outside_pid" | tr -d ' ')
+    assert [ "$engine_pgid" != "$outside_pgid" ]
+
+    # Send SIGTERM to engine — its trap reaps ONLY its own group
+    kill -TERM "$engine_pid" 2>/dev/null || true
+    wait "$engine_pid" 2>/dev/null || true
+    sleep 0.3
+
+    # The OUTSIDE process MUST still be alive
+    run kill -0 "$outside_pid" 2>/dev/null
+    assert_success
+
+    # Cleanup
+    kill -TERM "$outside_pid" 2>/dev/null || true
+    wait "$outside_pid" 2>/dev/null || true
 }

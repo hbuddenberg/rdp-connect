@@ -295,4 +295,12 @@ EOF
   run grep -E '^    tdd: true$' "$cfg"
   assert_success
   [[ "$output" == "    tdd: true" ]]
+
+  # Strengthened canary: assert NO stale `false` remains for either key.
+  # Catches a partial revert where someone edits one line back to false
+  # but the positive grep above still matches a different line elsewhere.
+  run grep -E '^strict_tdd: false$' "$cfg"
+  assert_failure
+  run grep -E '^    tdd: false$' "$cfg"
+  assert_failure
 }

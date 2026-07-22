@@ -140,11 +140,15 @@ REPRO
     rm -f "$sentinel" "$pgid_mark"
     "$repro" "$base"
     assert [ -f "$sentinel" ]
-    # Strengthened assertion: PID written must be a valid number (the
-    # session leader's PID).
+    # Strengthened assertion: PID written must be a non-empty numeric value
+    # (the session leader's PID). Use case+glob to stay sh-portable through
+    # bats-assert's eval context (avoids `[[ =~ ]]` which fails under sh).
     local written_pid
     written_pid=$(<"$pgid_mark")
-    assert [[ "$written_pid" =~ ^[0-9]+$ ]]
+    case "$written_pid" in
+        ''|*[!0-9]*) fail "written PID '$written_pid' is not a positive integer" ;;
+        *) : ;;
+    esac
 }
 
 @test "single_instance_pid_path_contract_unchanged" {

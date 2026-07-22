@@ -28,6 +28,24 @@ if [ -z "${_RDP_SESSION_ESTABLISHED:-}" ]; then
     _RDP_SESSION_ESTABLISHED=1 exec setsid --wait "$0" "$@" || exit $?
 fi
 
+# --- MODO VERBOSE: rdp-connect -v / --verbose [<profile>] ---
+# Strip -v/--verbose from anywhere in argv and set VERBOSE=1. Done BEFORE --help
+# so `rdp-connect -v --help` still resolves to the help block, and before every
+# other arg-consuming block (--new, --log, profile name). When VERBOSE=1, the
+# lib-side log_event tees each line to stderr (preflight milestones + xfreerdp3
+# output + exit cause), giving real-time terminal feedback instead of a silent
+# run that only surfaces the opaque setsid error on failure.
+VERBOSE=0
+_new_args=()
+for _a in "$@"; do
+    case "$_a" in
+        -v|--verbose) VERBOSE=1 ;;
+        *)            _new_args+=("$_a") ;;
+    esac
+done
+set -- "${_new_args[@]}"
+unset _a _new_args
+
 # --- MODO AYUDA: rdp-connect --help / -h ---
 # MUST be the FIRST arg-handling block. Runs BEFORE require_cmd (F6) AND before
 # the lib source / mkdir setup so `--help` is a pure documentation path that
@@ -45,6 +63,7 @@ Usage:
   rdp-connect <profile>          Direct connection to a profile
   rdp-connect --new <name>       Create a new profile from template
   rdp-connect --log <profile>    Tail the profile's audit log
+  rdp-connect -v <profile>       Verbose: tee milestones + xfreerdp3 output to stderr
   rdp-connect --help | -h        Show this help message
 
 Profiles:  ~/.config/rdp/profiles/*.env
@@ -213,9 +232,8 @@ LOG_FILE="$LOG_DIR/${PROFILE}.log"
 PID_FILE="$(compute_pid_path "$PROFILE")"
 START_TIME=$(date +%s)
 
-log_event() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$1] $2" >> "$LOG_FILE"
-}
+# log_event lives in lib/rdp-common.bash (extracted for unit-testable verbose
+# tee). It reads LOG_FILE + VERBOSE globals at call time; both are set by here.
 
 # --- SINGLE INSTANCE GUARD (Flock exclusivo por perfil) ---
 # flock is process-bound: a crashed peer's lock is released by the kernel,
@@ -356,8 +374,15 @@ compute_dpi_flags
 MONITORS=$(hyprctl monitors -j | jq -r '.[].id' | paste -sd, -)
 MON_COUNT=$(hyprctl monitors -j | jq '. | length')
 # F8: MON_FLAGS is an array, not a string. build_mon_flags (in lib) sets
-# MON_FLAGS=("/multimon" "/monitors:<ids>") or ("/f"). Expanded with the
-# quoted-safe form "${MON_FLAGS[@]-}" at the xfreerdp3 invocation site below.
+# MON_FLAGS=("/multimon" "/monitors:<ids>") or ("/f"). Expanded at the
+# xfreerdp3 invocation site below as "${MON_FLAGS[@]}".
+#
+# DO NOT use "${arr[@]-}" here or for DPI_FLAGS. Bash gotcha: with a DECLARED-
+# EMPTY array, "${arr[@]-}" yields a single empty-string token (argc=1), not
+# zero tokens. DPI_FLAGS is empty when scale==1.0, so the old "${DPI_FLAGS[@]-}"
+# form injected a phantom '' into argv that xfreerdp3 3.30.0 rejects as
+# "Unsupported command line syntax". "${arr[@]}" (no `-`) is correct: bash 4.4+
+# does not trip set -u on an empty array. See tests/freerdp3-flags.bats.
 build_mon_flags "$MON_COUNT" "$MONITORS"
 
 log_event "INFO" "Pantallas detectadas en Hyprland: $MON_COUNT (IDs: $MONITORS)."
@@ -383,16 +408,13 @@ echo "$PASS_RDP" | xfreerdp3 \
   /wm-class:"$WM_CLASS" \
   /sec:nla \
   /cert:tofu \
-  "${MON_FLAGS[@]-}" \
-  "${DPI_FLAGS[@]-}" \
+  "${MON_FLAGS[@]}" \
+  "${DPI_FLAGS[@]}" \
   +grab-keyboard \
-  /async-input \
   /async-update \
-  /async-transport \
   /mouse-motion \
-  /sound:sys:pipewire,latency:20 \
-  /microphone:sys:pipewire \
-  /camera \
+  /sound:sys:pulse,latency:20 \
+  /microphone:sys:pulse \
   +clipboard \
   +smartcard \
   +printer \
@@ -402,6 +424,10 @@ echo "$PASS_RDP" | xfreerdp3 \
   +fonts \
   +aero \
   +auto-reconnect \
-  /reconnect-max-retries:10 2>&1 | while IFS= read -r line; do
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [RDP] $line" >> "$LOG_FILE"
+  /auto-reconnect-max-retries:10 2>&1 | while IFS= read -r _rdp_line; do
+    _rdp_ts="[$(date '+%Y-%m-%d %H:%M:%S')] [RDP] $_rdp_line"
+    printf '%s\n' "$_rdp_ts" >> "$LOG_FILE"
+    if [ "${VERBOSE:-0}" = "1" ]; then
+        printf '%s\n' "$_rdp_ts" >&2
+    fi
 done

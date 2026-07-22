@@ -329,3 +329,34 @@ build_mon_flags() {
     MON_FLAGS=("/f")
   fi
 }
+
+# ---------------------------------------------------------------------------
+# log_event — timestamped log line + optional stderr tee (verbose mode)
+# ---------------------------------------------------------------------------
+# log_event <level> <message>
+#
+# Appends "[YYYY-MM-DD HH:MM:SS] [LEVEL] message" to LOG_FILE (caller-set
+# global). When VERBOSE=1 (set by the engine's -v/--verbose flag), ALSO writes
+# the same line to stderr so the user gets real-time terminal feedback instead
+# of a silent run that only surfaces the opaque `setsid: child did not exit
+# normally` message on failure.
+#
+# Reads globals at CALL time (LOG_FILE, VERBOSE): the engine sources the lib
+# early (L67) and assigns LOG_FILE/VERBOSE later, so the function resolves them
+# when invoked, not when defined — standard sourced-lib pattern.
+#
+# Extraction provenance: lifted from engine/rdp-connect (the 3-line log_event)
+# with the verbose tee added. Same Extract-Before-Mock pattern as
+# trim_profile_fields / extract_session_error: pure logic over globals → lib →
+# unit-testable. See tests/verbose-mode.bats for the behavioral coverage.
+log_event() {
+  local line
+  line="[$(date '+%Y-%m-%d %H:%M:%S')] [$1] $2"
+  printf '%s\n' "$line" >> "${LOG_FILE:-/dev/null}"
+  # if/then/fi (not `[ ] && printf`): the function MUST return 0 regardless of
+  # VERBOSE — a non-zero return here would, under the engine's `set -e`, abort
+  # on the very first log_event call. Caught by tests/verbose-mode.bats.
+  if [ "${VERBOSE:-0}" = "1" ]; then
+    printf '%s\n' "$line" >&2
+  fi
+}

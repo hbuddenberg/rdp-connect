@@ -38,8 +38,10 @@ _setup_runtime() {
 
 @test "engine_calls_setpgid_at_startup" {
     # F-G fix part 1: engine becomes its own process-group leader at startup.
-    # RED at T1: no setpgid in engine. GREEN at T2: setpgid at L8.
-    run grep -E '^[[:space:]]*setpgid[[:space:]]' "$(_engine_src)"
+    # Uses the `exec setsid --wait` idiom (NOT `setpgid 0 0` — that's the
+    # util-linux external binary on Arch and takes different args; the
+    # previous form `setpgid 0 0 || true` silently failed via `|| true`).
+    run grep -F 'exec setsid --wait' "$(_engine_src)"
     assert_success
 }
 
@@ -142,13 +144,96 @@ REPRO
 }
 
 @test "instance_locking_canonical_spec_documents_no_unlink_invariant" {
-    # Documentation backstop: the canonical spec at
-    # openspec/specs/instance-locking/spec.md MUST be amended at /sdd-archive
-    # to reflect the no-unlink invariant. Until then, this test asserts the
-    # DELTA spec carries the new contract (the canonical amendment is
-    # tracked in the archive phase).
-    local delta="$BATS_TEST_DIRNAME/../openspec/changes/multi-peer-race/specs/instance-locking-delta.md"
-    assert [ -f "$delta" ]
-    run grep -F 'MUST NOT' "$delta"
+    # After /sdd-archive, the canonical spec at
+    # openspec/specs/instance-locking/spec.md MUST carry the no-unlink
+    # invariant (was originally in the delta, synced at archive time).
+    local canonical="$BATS_TEST_DIRNAME/../openspec/specs/instance-locking/spec.md"
+    assert [ -f "$canonical" ]
+    run grep -F 'MUST NOT' "$canonical"
     assert_success
+}
+
+# ---------------------------------------------------------------------------
+# Behavioral test for S9 (orphan-xfreerdp3 killed on signal exit)
+# This is the test that CAUGHT the setpgid-vs-setsid bug: the previous
+# `setpgid 0 0 || true` form silently failed (util-linux external binary),
+# so the engine never became a process-group leader, and `kill -- -$$` in
+# the trap would have killed the wrong process group.
+# ---------------------------------------------------------------------------
+
+@test "orphan_child_killed_when_engine_receives_signal_behavioral" {
+    # Pattern: launch a subshell that mirrors the engine's structure
+    # (setsid-based session establishment + cleanup trap + child spawn),
+    # send SIGTERM, verify the child dies with the engine.
+    _setup_runtime
+    local ready="$BATS_TMPDIR/orphan-ready.sentinel"
+    local child_mark="$BATS_TMPDIR/orphan-child.pid"
+    local repro="$BATS_TMPDIR/orphan-repro.sh"
+
+    cat > "$repro" <<'REPRO'
+#!/usr/bin/env bash
+set -euo pipefail
+READY="$1"
+CHILD_MARK="$2"
+
+# F-G fix part 1 (corrected): use `exec setsid --wait`, NOT `setpgid 0 0`.
+# setsid creates a new session with caller as leader; --wait propagates
+# exit code. Guard prevents infinite re-exec.
+if [ -z "${_RDP_SESSION_ESTABLISHED:-}" ]; then
+    _RDP_SESSION_ESTABLISHED=1 exec setsid --wait "$0" "$@" || exit $?
+fi
+
+# F-G fix part 2: trap reaps the process group BEFORE logging
+cleanup() {
+    kill -- -$$ 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# Spawn a "child" (simulates xfreerdp3)
+sleep 60 &
+CHILD=$!
+echo "$CHILD" > "$CHILD_MARK"
+touch "$READY"
+
+wait $CHILD 2>/dev/null || true
+REPRO
+    chmod +x "$repro"
+
+    rm -f "$ready" "$child_mark"
+    "$repro" "$ready" "$child_mark" &
+    local parent=$!
+
+    # Wait for ready (sentinel sync, not fixed sleep)
+    local deadline=$(( $(date +%s) + 10 ))
+    while [ ! -f "$ready" ] && [ $(date +%s) -lt $deadline ]; do
+        sleep 0.05
+    done
+    [ -f "$ready" ] || skip "ready sentinel not created in time"
+
+    local child_pid
+    child_pid=$(<"$child_mark")
+
+    # Child must be alive pre-signal
+    kill -0 "$child_pid" 2>/dev/null || skip "child died before signal"
+
+    # Verify child is in the engine's process group (the WHOLE POINT of setsid)
+    local parent_pgid child_pgid
+    parent_pgid=$(ps -o pgid= -p "$parent" | tr -d ' ')
+    child_pgid=$(ps -o pgid= -p "$child_pid" | tr -d ' ')
+    assert [ "$parent_pgid" = "$child_pgid" ]
+    assert [ "$parent_pgid" = "$parent" ]   # parent is the leader
+
+    # Send SIGTERM to engine — trap should reap the process group
+    kill -TERM "$parent" 2>/dev/null || true
+    wait "$parent" 2>/dev/null || true
+
+    # Give cleanup a moment to propagate
+    local deadline2=$(( $(date +%s) + 3 ))
+    while kill -0 "$child_pid" 2>/dev/null && [ $(date +%s) -lt $deadline2 ]; do
+        sleep 0.05
+    done
+
+    # Child must now be DEAD (process group was killed)
+    run kill -0 "$child_pid" 2>/dev/null
+    assert_failure   # kill -0 returns non-zero when process is gone
 }

@@ -6,12 +6,27 @@
 # security-relevant call (per engine-robustness-delta R2 mitigation).
 set -euo pipefail
 
-# multi-peer-race (F-G fix part 1): become the process-group leader so the
-# EXIT trap can `kill -- -$$` to reap child processes (xfreerdp3). setpgid
-# 0 0 puts the calling process into a NEW pgid == $$. Children spawned
-# after this inherit the pgid. `|| true` because some environments (e.g.
-# already-a-group-leader) error harmlessly.
-setpgid 0 0 || true
+# multi-peer-race (F-G fix part 1): become a session leader so the EXIT trap
+# can `kill -- -$$` to reap child processes (xfreerdp3).
+#
+# CRITICAL: standard `setpgid 0 0` is a bash-builtin on some distros but an
+# external util-linux binary on Arch (and possibly others), where it takes
+# completely different args ("run a program in a new process group"). The
+# previous form `setpgid 0 0 || true` SILENTLY FAILED via `|| true`, leaving
+# the engine in its parent's process group — `kill -- -$$` would then kill
+# the parent's whole group (e.g. user's interactive shell). Caught by the
+# behavioral coverage follow-up to multi-peer-race.
+#
+# The portable idiom is `exec setsid --wait`: setsid creates a NEW session
+# (which is also a new process group) with the calling process as leader,
+# and re-execs this script. `--wait` makes setsid propagate the child's
+# exit code back. PID is preserved across the re-exec, so `$$` remains the
+# engine's PID == PGID == SID.
+#
+# Guard via env var to avoid infinite re-exec loop.
+if [ -z "${_RDP_SESSION_ESTABLISHED:-}" ]; then
+    _RDP_SESSION_ESTABLISHED=1 exec setsid --wait "$0" "$@" || exit $?
+fi
 
 # --- MODO AYUDA: rdp-connect --help / -h ---
 # MUST be the FIRST arg-handling block. Runs BEFORE require_cmd (F6) AND before

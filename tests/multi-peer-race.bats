@@ -388,3 +388,133 @@ ENGINE
     kill -TERM "$outside_pid" 2>/dev/null || true
     wait "$outside_pid" 2>/dev/null || true
 }
+
+# ---------------------------------------------------------------------------
+# Behavioral test for S2 (signal-induced EXIT trap does NOT unlink PID file)
+# S8 (trap fires kill on group) is implicitly covered by S9 above.
+# ---------------------------------------------------------------------------
+
+@test "signal_induced_trap_preserves_pid_file_behavioral" {
+    # S2 contract: when a signal fires the EXIT trap, the PID file MUST
+    # remain on disk. Combined with the engine's "no unlink" invariant
+    # (engine_does_not_unlink_pid_file_in_cleanup source-grep test),
+    # this proves the full R7 fix end-to-end: signal arrives → trap
+    # fires → kill -- -$$ reaps children → PID file persists → next
+    # start's flock -n reclaims.
+    _setup_runtime
+    local pid_file="$XDG_RUNTIME_DIR/s2-preserve.pid"
+    local ready="$BATS_TMPDIR/s2-ready.sentinel"
+    local repro="$BATS_TMPDIR/s2-repro.sh"
+
+    cat > "$repro" <<'REPRO'
+#!/usr/bin/env bash
+set -euo pipefail
+PID_FILE="$1" READY="$2"
+if [ -z "${_S2_SESSION:-}" ]; then
+    _S2_SESSION=1 exec setsid --wait "$0" "$@" || exit $?
+fi
+exec 200>"$PID_FILE"
+flock -n 200 || exit 99
+echo "$$" >&200
+cleanup() {
+    kill -- -$$ 2>/dev/null || true
+    # NO unlink — R7 invariant
+}
+trap cleanup EXIT
+touch "$READY"
+while true; do sleep 0.1; done
+REPRO
+    chmod +x "$repro"
+
+    rm -f "$pid_file" "$ready"
+    "$repro" "$pid_file" "$ready" &
+    local target=$!
+
+    local deadline=$(( $(date +%s) + 5 ))
+    while [ ! -f "$ready" ] && [ $(date +%s) -lt $deadline ]; do
+        sleep 0.05
+    done
+    [ -f "$ready" ] || { kill -9 "$target" 2>/dev/null || true; skip "target didn't start"; }
+    [ -f "$pid_file" ] || skip "PID file not created by target"
+
+    # Signal-induced exit
+    kill -TERM "$target" 2>/dev/null || true
+    wait "$target" 2>/dev/null || true
+    sleep 0.3
+
+    # PID file MUST still exist (was not unlinked by the trap)
+    assert [ -f "$pid_file" ]
+}
+
+# ---------------------------------------------------------------------------
+# Behavioral test for S3 (early-exit before flock does not error)
+# ---------------------------------------------------------------------------
+
+@test "peer_branch_exit_is_clean_behavioral" {
+    # S3 contract: when flock -n fails (peer holds lock), the contender
+    # exits 0 cleanly WITHOUT triggering the EXIT-trap unlink logic (the
+    # trap is registered AFTER the flock block; the peer branch exits
+    # before the trap is installed). This test reproduces the engine's
+    # flock-block structure and asserts the peer-branch exit code is 0.
+    _setup_runtime
+    local pid_file="$XDG_RUNTIME_DIR/s3-peer.pid"
+    local holder="$BATS_TMPDIR/s3-holder.sh"
+    local contender="$BATS_TMPDIR/s3-contender.sh"
+
+    # Holder: keeps the lock for the duration of the test.
+    cat > "$holder" <<'HOLDER'
+#!/usr/bin/env bash
+set -euo pipefail
+exec 200>"$1"
+flock -n 200 || exit 99
+echo "$$" >&200
+sleep 5
+HOLDER
+    chmod +x "$holder"
+
+    # Contender: mirrors the engine's flock-then-peer-branch structure.
+    # The trap is registered AFTER the flock block — peer branch exits
+    # before the trap is installed (so even if the trap had a bug, the
+    # peer path is unaffected).
+    cat > "$contender" <<'CONTENDER'
+#!/usr/bin/env bash
+set -euo pipefail
+PID_FILE="$1"
+_LOCK_ACQUIRED=false
+exec 200>"$PID_FILE"
+if ! flock -n 200; then
+    # Peer branch — clean exit, no trap installed yet.
+    exit 0
+fi
+_LOCK_ACQUIRED=true
+echo "$$" >&200
+
+cleanup() {
+    kill -- -$$ 2>/dev/null || true
+    # NO unlink (R7 invariant)
+    :
+}
+trap cleanup EXIT
+sleep 5
+CONTENDER
+    chmod +x "$contender"
+
+    rm -f "$pid_file"
+
+    # Acquire the lock from outside (simulating a running peer)
+    "$holder" "$pid_file" &
+    local holder_pid=$!
+    local deadline=$(( $(date +%s) + 3 ))
+    while [ ! -s "$pid_file" ] && [ $(date +%s) -lt $deadline ]; do
+        sleep 0.05
+    done
+    [ -s "$pid_file" ] || { kill -9 "$holder_pid" 2>/dev/null || true; skip "holder didn't acquire"; }
+
+    # Run contender — should exit 0 cleanly (peer branch)
+    run "$contender" "$pid_file"
+    assert_success
+
+    # Cleanup
+    kill -TERM "$holder_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+}

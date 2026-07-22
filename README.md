@@ -40,7 +40,7 @@ Canonical contracts live at **[`openspec/specs/`](openspec/specs/)** — one dir
 
 | Binary | Purpose | pacman | apt | dnf |
 |---|---|---|---|---|
-| `xfreerdp3` | RDP client (must support `/from-stdin:force`) | `freerdp3` | `freerdp3-x11` | `freerdp` |
+| `xfreerdp3` | RDP client (must support `/from-stdin:force`) | `freerdp` | `freerdp3-x11` | `freerdp` |
 | `jq` | HiDPI scale math + monitor parsing | `jq` | `jq` | `jq` |
 | `flock` | Single-instance guard | `util-linux` | `util-linux` | `util-linux` |
 | `notify-send` | Desktop notifications | `libnotify` | `libnotify-bin` | `libnotify` |

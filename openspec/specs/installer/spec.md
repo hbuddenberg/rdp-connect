@@ -47,7 +47,7 @@ edge cases cannot break detection.
 ### Requirement: Declared dependency list with missing-dep install
 
 The installer MUST declare a single dependency list mapping each package to its
-name on each supported manager (e.g. `freerdp3` on Arch → `freerdp3-x11` on
+name on each supported manager (e.g. `freerdp` on Arch → `freerdp3-x11` on
 Debian → `freerdp` on Fedora). Before deploying engine files, the installer MUST
 check each dependency and install any missing one via the detected package
 manager. The declared set is: FreeRDP3 (with `/from-stdin:force`), `jq`,

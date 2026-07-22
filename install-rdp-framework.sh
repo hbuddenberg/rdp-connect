@@ -51,7 +51,7 @@ pkg_for() {
     case "$pkgr" in
         pacman)
             case "$binary" in
-                xfreerdp3)   printf '%s' freerdp3 ;;
+                xfreerdp3)   printf '%s' freerdp ;;
                 jq)          printf '%s' jq ;;
                 flock)       printf '%s' util-linux ;;
                 notify-send) printf '%s' libnotify ;;
@@ -229,43 +229,45 @@ write_manifest() {
 }
 
 # ===========================================================================
-# MAIN
+# MAIN (guarded so the script is unit-testable via `source`)
 # ===========================================================================
-echo "🚀 Desplegando RDP Master Framework en el sistema..."
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    echo "🚀 Desplegando RDP Master Framework en el sistema..."
 
-# --- F10: detect distro ---
-if ! PKGR=$(detect_pkgr); then
-    cat >&2 << 'UNSUPPORTED'
+    # --- F10: detect distro ---
+    if ! PKGR=$(detect_pkgr); then
+        cat >&2 << 'UNSUPPORTED'
 ❌ Unsupported distribution. /etc/os-release did not match pacman/dnf/apt.
 
 Required binaries: xfreerdp3 jq flock notify-send wofi|rofi hyprctl
 
 Manual install commands for reference (run the one matching your distro):
 
-  pacman:  sudo pacman -S freerdp3 jq util-linux libnotify wofi hyprland shellcheck
+  pacman:  sudo pacman -S freerdp jq util-linux libnotify wofi hyprland shellcheck
   apt:     sudo apt install freerdp3-x11 jq util-linux libnotify-bin wofi hyprland shellcheck
   dnf:     sudo dnf install freerdp jq util-linux libnotify wofi hyprland shellcheck
 
 No files were written. Install the dependencies manually, then re-run this script.
 UNSUPPORTED
-    exit 1
+        exit 1
+    fi
+    echo "📦 Detected package manager: $PKGR"
+
+    # --- F10: install missing deps ---
+    install_deps "$PKGR"
+
+    # --- F10: deploy files (idempotent) ---
+    deploy_files
+
+    # --- F10: smoke test ---
+    echo ""
+    echo "🔍 Running post-install smoke test..."
+    run_smoke_test || { echo "❌ Smoke test failed — aborting install."; exit 1; }
+
+    # --- F10: checksum manifest ---
+    write_manifest
+
+    echo ""
+    echo "✅ Framework RDP desplegado exitosamente."
+    echo "   Edit ~/.config/rdp/profiles/<name>.env to set real credentials."
 fi
-echo "📦 Detected package manager: $PKGR"
-
-# --- F10: install missing deps ---
-install_deps "$PKGR"
-
-# --- F10: deploy files (idempotent) ---
-deploy_files
-
-# --- F10: smoke test ---
-echo ""
-echo "🔍 Running post-install smoke test..."
-run_smoke_test || { echo "❌ Smoke test failed — aborting install."; exit 1; }
-
-# --- F10: checksum manifest ---
-write_manifest
-
-echo ""
-echo "✅ Framework RDP desplegado exitosamente."
-echo "   Edit ~/.config/rdp/profiles/<name>.env to set real credentials."

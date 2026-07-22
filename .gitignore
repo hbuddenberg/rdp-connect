@@ -7,6 +7,9 @@ profiles/*.env
 *.pid
 .local/state/
 
+# Test fixtures son casos de prueba, no logs de runtime — commitearlos
+!tests/fixtures/**/*.log
+
 # OpenSpec artifacts (se deciden por cambio)
 # openspec/  # descomentar si querés ignorar artifacts SDD
 

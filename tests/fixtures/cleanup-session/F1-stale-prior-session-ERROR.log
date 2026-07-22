@@ -1,0 +1,8 @@
+[2026-07-21 10:00:00] [SESSION_START] pid=1111 profile=work
+[2026-07-21 10:00:05] [INFO] inicio de sesión previa
+[2026-07-21 10:00:10] [ERROR] VPN requerida (10.8.0.1) inalcanzable. Abortando.
+[2026-07-21 10:00:11] [INFO] sesión previa finalizada
+[2026-07-21 11:00:00] [SESSION_START] pid=2222 profile=work
+[2026-07-21 11:00:05] [INFO] Verificando VPN (10.8.0.1)...
+[2026-07-21 11:00:10] [INFO] Puerto 3389 en host respondiendo correctamente.
+[2026-07-21 11:00:15] [INFO] sesión actual finalizada

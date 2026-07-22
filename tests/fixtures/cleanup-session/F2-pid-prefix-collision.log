@@ -1,0 +1,6 @@
+[2026-07-21 10:00:00] [SESSION_START] pid=2222 profile=work
+[2026-07-21 10:00:05] [ERROR] stale ERROR from session 2222 (MUST NOT be returned for pid=222)
+[2026-07-21 10:00:06] [INFO] puerto 3389 OK
+[2026-07-21 11:00:00] [SESSION_START] pid=222 profile=work
+[2026-07-21 11:00:05] [ERROR] VPN requerida (10.8.0.1) inalcanzable. Abortando.
+[2026-07-21 11:00:10] [INFO] Puerto 3389 en host respondiendo correctamente.

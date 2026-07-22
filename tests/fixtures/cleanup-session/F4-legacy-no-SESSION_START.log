@@ -1,0 +1,4 @@
+[2026-07-19 10:00:00] [INFO] legacy log format — no SESSION_START marker (predates T2.5 Bug B fix)
+[2026-07-19 10:00:05] [ERROR] legacy ERROR from before SESSION_START markers existed
+[2026-07-19 10:00:10] [INFO] another legacy info line
+[2026-07-19 10:00:15] [ERROR] another legacy ERROR — also MUST NOT be returned (no current-session marker)

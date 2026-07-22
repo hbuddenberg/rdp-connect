@@ -28,19 +28,28 @@ if [ -z "${_RDP_SESSION_ESTABLISHED:-}" ]; then
     _RDP_SESSION_ESTABLISHED=1 exec setsid --wait "$0" "$@" || exit $?
 fi
 
-# --- MODO VERBOSE / NO-AUDIO: rdp-connect -v | --no-audio [<profile>] ---
-# Strip both optional flags from anywhere in argv in a single pass, BEFORE
-# --help and every other arg-consuming block. -v/--verbose -> VERBOSE=1 (lib
-# log_event tees to stderr). --no-audio -> NO_AUDIO=1 (per-invocation override
-# that forces SOUND_FLAGS empty regardless of the profile's AUDIO_REDIRECT).
+# --- OPTIONAL FLAGS: -v | --no-audio | --single-mon | --multi-mon [<profile>] ---
+# Strip all optional flags from argv in a single pass, BEFORE --help and every
+# other arg-consuming block.
+#   -v/--verbose  -> VERBOSE=1 (lib log_event tees to stderr)
+#   --no-audio    -> NO_AUDIO=1 (force SOUND_FLAGS empty)
+#   --single-mon  -> MONITOR_MODE_OVERRIDE=single (force single-monitor fullscreen)
+#   --multi-mon    -> MONITOR_MODE_OVERRIDE=multi  (force multi-monitor)
+# Note: under Hyprland/XWayland a single xfreerdp3 window cannot span physical
+# monitors, so /multimon renders all remote monitors into one cramped window;
+# single mode (+f) fullscreens one remote monitor instead. The mode is also
+# settable per-profile via MONITOR_MODE (multi [default] | single).
 VERBOSE=0
 NO_AUDIO=0
+MONITOR_MODE_OVERRIDE=""
 _new_args=()
 for _a in "$@"; do
     case "$_a" in
-        -v|--verbose) VERBOSE=1 ;;
-        --no-audio)   NO_AUDIO=1 ;;
-        *)            _new_args+=("$_a") ;;
+        -v|--verbose)  VERBOSE=1 ;;
+        --no-audio)    NO_AUDIO=1 ;;
+        --single-mon)  MONITOR_MODE_OVERRIDE=single ;;
+        --multi-mon)    MONITOR_MODE_OVERRIDE=multi ;;
+        *)             _new_args+=("$_a") ;;
     esac
 done
 set -- "${_new_args[@]}"
@@ -65,6 +74,8 @@ Usage:
   rdp-connect --log <profile>    Tail the profile's audit log
   rdp-connect -v <profile>       Verbose: tee milestones + xfreerdp3 output to stderr
   rdp-connect --no-audio <profile>  Disable audio redirect (leave sound on remote)
+  rdp-connect --single-mon <profile>  Single-monitor fullscreen (MONITOR_ID picks which)
+  rdp-connect --multi-mon <profile>    Multi-monitor (default; cramped window under Hyprland)
   rdp-connect --help | -h        Show this help message
 
 Profiles:  ~/.config/rdp/profiles/*.env
@@ -253,7 +264,10 @@ if ! flock -n 200; then
     _peer=$(<"$PID_FILE" 2>/dev/null || true)
     log_event "WARN" "Instancia activa pid=${_peer:-?} detectada. Enfocando ventana..."
     notify-send -i display "RDP $PROFILE" "$MSG_ALREADY_ACTIVE" || true
-    hyprctl dispatch focuswindow "class:^($WM_CLASS)$" || true
+    # Hyprland 0.55+: focus the peer's existing window via the Lua dispatcher
+    # (`hyprctl dispatch '<lua>'`). The legacy `focuswindow class:...` form was
+    # rejected by the new parser. Window already exists in this path.
+    hyprctl dispatch "hl.dsp.focus({ window = \"class:$WM_CLASS\" })" &>/dev/null || true
     exit 0
 fi
 _LOCK_ACQUIRED=true
@@ -384,26 +398,90 @@ MON_COUNT=$(hyprctl monitors -j | jq '. | length')
 # form injected a phantom '' into argv that xfreerdp3 3.30.0 rejects as
 # "Unsupported command line syntax". "${arr[@]}" (no `-`) is correct: bash 4.4+
 # does not trip set -u on an empty array. See tests/freerdp3-flags.bats.
-build_mon_flags "$MON_COUNT" "$MONITORS"
+# --- MONITOR MODE (MONITOR_MODE profile key + --single-mon/--multi-mon CLI) ---
+# Effective mode: CLI override wins, else profile MONITOR_MODE, else multi.
+# Under Hyprland/XWayland, /multimon renders all remote monitors into one
+# window (can't span physical outputs); single mode fullscreens one remote
+# monitor (/monitors:<id> +f). MONITOR_ID picks the remote monitor in single
+# mode (default 0). MON_FLAGS is an array; expanded with "${MON_FLAGS[@]}"
+# (zero args when empty — the correct form, NO `-`).
+MON_FLAGS=()
+case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-multi}}" in
+    single)
+        _EFF_MODE=single
+        # Query the selected client monitor's native resolution and ask FreeRDP
+        # to render the remote desktop at that size, then fullscreen. Without
+        # /size, FreeRDP negotiates a small default (HD on a 2K screen).
+        _mon_res=$(hyprctl monitors -j 2>/dev/null | jq -r --argjson id "${MONITOR_ID:-0}" '.[] | select(.id==$id) | "\(.width)x\(.height)"' 2>/dev/null || true)
+        if [ -n "${_mon_res:-}" ]; then
+            MON_FLAGS=("/size:$_mon_res" "+f")
+        else
+            MON_FLAGS=("+f")
+        fi
+        unset _mon_res
+        log_event "INFO" "Modo single-monitor: monitor client ${MONITOR_ID:-0} -> /size +f fullscreen."
+        ;;
+    multi|*)
+        _EFF_MODE=multi
+        build_mon_flags "$MON_COUNT" "$MONITORS"
+        log_event "INFO" "Pantallas detectadas en Hyprland: $MON_COUNT (IDs: $MONITORS)."
+        ;;
+esac
 
 # --- AUDIO TOGGLE (AUDIO_REDIRECT profile key + --no-audio CLI override) ---
-# AUDIO_REDIRECT=1 (default) redirects remote audio to the client (current
-# behavior); AUDIO_REDIRECT=0 leaves audio on the remote machine. --no-audio
-# forces off per-invocation regardless of the profile. Built as an array and
-# expanded with "${SOUND_FLAGS[@]}" (zero args when empty — the CORRECT
-# empty-array form; the "-default" gotcha that broke DPI_FLAGS must NOT come
-# back here). See tests/audio-toggle.bats.
+# Three modes, matching mstsc "Remote Audio Playback":
+#   AUDIO_REDIRECT=1 (default) -> /sound + /microphone  ("Play on this computer" = redirect to client)
+#   AUDIO_REDIRECT=0           -> /audio-mode:1         ("Play on remote computer" = server's local speakers)
+#   --no-audio (CLI override)  -> (empty)               ("Do not play" = no audio at all)
+#
+# WARNING: xfreerdp3 /? MISLABELS /audio-mode. The help claims :2 is "server",
+# but the source (settings.h) + empirical RDP-flag verification prove the real
+# mapping: :0=redirect, :1=leave-on-server, :2=DISABLE. /audio-mode:1 sets
+# INFO_REMOTECONSOLEAUDIO in the Client Info Packet (the "play on remote
+# console" signal); /audio-mode:2 does NOT (it disables audio). Use :1 for
+# server playback. See tests/audio-toggle.bats for the regression.
+#
+# Built as an array, expanded with "${SOUND_FLAGS[@]}" (zero args when empty —
+# the CORRECT empty-array form; the "-default" gotcha that broke DPI_FLAGS
+# must NOT come back here).
 SOUND_FLAGS=()
-if [ "${AUDIO_REDIRECT:-1}" = "1" ] && [ "${NO_AUDIO:-0}" != "1" ]; then
+if [ "${NO_AUDIO:-0}" = "1" ]; then
+    : # --no-audio: no audio at all
+elif [ "${AUDIO_REDIRECT:-1}" = "1" ]; then
     SOUND_FLAGS=("/sound:sys:pulse,latency:20" "/microphone:sys:pulse")
+else
+    # AUDIO_REDIRECT=0: play on the REMOTE server (xfreerdp3 /audio-mode:1 =
+    # mstsc "Play on remote computer"; sets INFO_REMOTECONSOLEAUDIO). NOT empty
+    # — empty produced the "no audio devices" bug (RDP session had no audio).
+    SOUND_FLAGS=("/audio-mode:1")
 fi
 
-log_event "INFO" "Pantallas detectadas en Hyprland: $MON_COUNT (IDs: $MONITORS)."
-
-if [ -n "${PREFERRED_WS:-}" ]; then
-    hyprctl keyword windowrulev2 "workspace $PREFERRED_WS, class:^($WM_CLASS)$" &>/dev/null || true
-    log_event "INFO" "Asignando ventana $WM_CLASS al Workspace $PREFERRED_WS."
-fi
+# --- BACKGROUND WINDOW MANAGEMENT (Hyprland 0.55+ Lua dispatcher API) ---
+# The new API is action-based (the window must already exist), but xfreerdp3
+# hasn't created it yet. Spawn a background subshell that polls for the window
+# by class, then: moves it to PREFERRED_WS, focuses it, and (single mode)
+# fullscreens it. Runs concurrently with the xfreerdp3 pipeline below.
+# `hyprctl dispatch '<lua>'` executes the dispatcher; `class:$WM_CLASS` is the
+# selector. See tests/hyprland-api.bats + wiki/Using-hyprctl.
+(
+    _tries=0
+    while [ "$_tries" -lt 30 ]; do
+        if hyprctl clients -j 2>/dev/null | jq -e --arg c "$WM_CLASS" 'any(.[]; .class==$c)' >/dev/null 2>&1; then
+            break
+        fi
+        sleep 0.2
+        _tries=$((_tries+1))
+    done
+    if [ -n "${PREFERRED_WS:-}" ]; then
+        hyprctl dispatch "hl.dsp.window.move({ workspace = \"$PREFERRED_WS\", window = \"class:$WM_CLASS\" })" &>/dev/null || true
+        log_event "INFO" "Ventana $WM_CLASS movida al Workspace $PREFERRED_WS." 2>/dev/null || true
+    fi
+    hyprctl dispatch "hl.dsp.focus({ window = \"class:$WM_CLASS\" })" &>/dev/null || true
+    if [ "${_EFF_MODE:-multi}" = "single" ]; then
+        hyprctl dispatch "hl.dsp.window.fullscreen({ mode = \"fullscreen\", action = \"set\", window = \"class:$WM_CLASS\" })" &>/dev/null || true
+        log_event "INFO" "Ventana $WM_CLASS fullscreen (single-mon)." 2>/dev/null || true
+    fi
+) &
 
 export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
 export LIBVA_DRIVER_NAME=iHD

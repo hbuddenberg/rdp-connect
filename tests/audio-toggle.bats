@@ -75,6 +75,30 @@ load test_helper
   [ "$output" != "0" ] || fail "SOUND_FLAGS array not built"
 }
 
+@test "engine_audio_redirect_zero_uses_audio_mode_server" {
+  # AUDIO_REDIRECT=0 means "play on the remote server" (mstsc "Play on remote
+  # computer") -> xfreerdp3 /audio-mode:1. It is NOT an empty flag set (empty
+  # would mean "no audio at all", which produced the "no audio devices" bug).
+  #
+  # IMPORTANT: the xfreerdp3 /? help is MISLABELED. It claims /audio-mode:2 is
+  # "server", but the source (settings.h) and empirical RDP-flag verification
+  # show the real mapping:
+  #   /audio-mode:0 = redirect (to client)
+  #   /audio-mode:1 = leave on server  (sets INFO_REMOTECONSOLEAUDIO)  <- THIS ONE
+  #   /audio-mode:2 = disable audio    (no INFO_REMOTECONSOLEAUDIO)
+  # Verified: /audio-mode:1 sets INFO_REMOTECONSOLEAUDIO in the Client Info
+  # Packet; /audio-mode:2 does NOT. Trust settings.h, not the --help text.
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF '/audio-mode:1'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "AUDIO_REDIRECT=0 path missing /audio-mode:1 (server playback)"
+  # /audio-mode:2 (the mislabeled "server") MUST NOT be used — it disables audio.
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF '/audio-mode:2'"
+  [ "$status" -ne 0 ] || fail "found /audio-mode:2 in CODE — that DISABLES audio, not server playback"
+  assert_output "0"
+}
+
 @test "engine_sound_flags_use_correct_empty_array_expansion" {
   # The "${SOUND_FLAGS[@]-}" form (with `-`) would re-introduce the phantom
   # empty-arg bug that broke DPI_FLAGS. MUST be "${SOUND_FLAGS[@]}" (no `-`).

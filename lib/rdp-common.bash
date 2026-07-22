@@ -39,6 +39,8 @@ declare -gA _PROFILE_KEYS=(
   [PREFERRED_WS]=1
   [LANG_OVERRIDE]=1
   [AUDIO_REDIRECT]=1
+  [MONITOR_MODE]=1
+  [MONITOR_ID]=1
 )
 
 # ---------------------------------------------------------------------------

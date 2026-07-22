@@ -38,6 +38,7 @@ declare -gA _PROFILE_KEYS=(
   [VPN_CHECK]=1
   [PREFERRED_WS]=1
   [LANG_OVERRIDE]=1
+  [AUDIO_REDIRECT]=1
 )
 
 # ---------------------------------------------------------------------------

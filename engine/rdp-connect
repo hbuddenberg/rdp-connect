@@ -28,18 +28,18 @@ if [ -z "${_RDP_SESSION_ESTABLISHED:-}" ]; then
     _RDP_SESSION_ESTABLISHED=1 exec setsid --wait "$0" "$@" || exit $?
 fi
 
-# --- MODO VERBOSE: rdp-connect -v / --verbose [<profile>] ---
-# Strip -v/--verbose from anywhere in argv and set VERBOSE=1. Done BEFORE --help
-# so `rdp-connect -v --help` still resolves to the help block, and before every
-# other arg-consuming block (--new, --log, profile name). When VERBOSE=1, the
-# lib-side log_event tees each line to stderr (preflight milestones + xfreerdp3
-# output + exit cause), giving real-time terminal feedback instead of a silent
-# run that only surfaces the opaque setsid error on failure.
+# --- MODO VERBOSE / NO-AUDIO: rdp-connect -v | --no-audio [<profile>] ---
+# Strip both optional flags from anywhere in argv in a single pass, BEFORE
+# --help and every other arg-consuming block. -v/--verbose -> VERBOSE=1 (lib
+# log_event tees to stderr). --no-audio -> NO_AUDIO=1 (per-invocation override
+# that forces SOUND_FLAGS empty regardless of the profile's AUDIO_REDIRECT).
 VERBOSE=0
+NO_AUDIO=0
 _new_args=()
 for _a in "$@"; do
     case "$_a" in
         -v|--verbose) VERBOSE=1 ;;
+        --no-audio)   NO_AUDIO=1 ;;
         *)            _new_args+=("$_a") ;;
     esac
 done
@@ -64,6 +64,7 @@ Usage:
   rdp-connect --new <name>       Create a new profile from template
   rdp-connect --log <profile>    Tail the profile's audit log
   rdp-connect -v <profile>       Verbose: tee milestones + xfreerdp3 output to stderr
+  rdp-connect --no-audio <profile>  Disable audio redirect (leave sound on remote)
   rdp-connect --help | -h        Show this help message
 
 Profiles:  ~/.config/rdp/profiles/*.env
@@ -385,6 +386,18 @@ MON_COUNT=$(hyprctl monitors -j | jq '. | length')
 # does not trip set -u on an empty array. See tests/freerdp3-flags.bats.
 build_mon_flags "$MON_COUNT" "$MONITORS"
 
+# --- AUDIO TOGGLE (AUDIO_REDIRECT profile key + --no-audio CLI override) ---
+# AUDIO_REDIRECT=1 (default) redirects remote audio to the client (current
+# behavior); AUDIO_REDIRECT=0 leaves audio on the remote machine. --no-audio
+# forces off per-invocation regardless of the profile. Built as an array and
+# expanded with "${SOUND_FLAGS[@]}" (zero args when empty — the CORRECT
+# empty-array form; the "-default" gotcha that broke DPI_FLAGS must NOT come
+# back here). See tests/audio-toggle.bats.
+SOUND_FLAGS=()
+if [ "${AUDIO_REDIRECT:-1}" = "1" ] && [ "${NO_AUDIO:-0}" != "1" ]; then
+    SOUND_FLAGS=("/sound:sys:pulse,latency:20" "/microphone:sys:pulse")
+fi
+
 log_event "INFO" "Pantallas detectadas en Hyprland: $MON_COUNT (IDs: $MONITORS)."
 
 if [ -n "${PREFERRED_WS:-}" ]; then
@@ -413,8 +426,7 @@ echo "$PASS_RDP" | xfreerdp3 \
   +grab-keyboard \
   /async-update \
   /mouse-motion \
-  /sound:sys:pulse,latency:20 \
-  /microphone:sys:pulse \
+  "${SOUND_FLAGS[@]}" \
   +clipboard \
   +smartcard \
   +printer \

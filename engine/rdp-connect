@@ -451,6 +451,9 @@ MON_COUNT=$(hyprctl monitors -j | jq '. | length')
 # monitor (/monitors:<id> +f). MONITOR_ID picks the remote monitor in single
 # mode (default 0). MON_FLAGS is an array; expanded with "${MON_FLAGS[@]}"
 # (zero args when empty — the correct form, NO `-`).
+# Pre-resolve effective client (full CLIENT SELECTION is at L533; this early
+# read lets the monitor block skip /monitors: for SDL — it has its own IDs).
+_eff_client="${_client_override:-${CLIENT:-x11}}"
 MON_FLAGS=()
 case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-multi}}" in
     single)
@@ -483,6 +486,12 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-multi}}" in
         ;;
     multi|*)
         _EFF_MODE=multi
+        if [ "${_eff_client:-x11}" = "sdl" ]; then
+            # sdl-freerdp3 has its OWN monitor ID scheme (not hyprctl). Don't
+            # pass /monitors: — let SDL auto-detect all monitors. Just /multimon.
+            MON_FLAGS=("/multimon")
+            log_event "INFO" "Modo multi-monitor (SDL): /multimon (auto-detect)."
+        else
         # Build /monitors list. Precedence: --monitor-order flag > MONITOR_ORDER
         # config > first N of detected (--monitors / MONITORS) > all detected.
         # NOTE: per-monitor resolution (MONITOR_<id>) is IGNORED in multi —
@@ -500,6 +509,7 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-multi}}" in
         fi
         log_event "INFO" "Modo multi-monitor: ${MON_FLAGS[*]}."
         unset _order
+        fi
         ;;
 esac
 

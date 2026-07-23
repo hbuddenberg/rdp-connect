@@ -551,10 +551,11 @@ CLIENT_FLAGS=()
 case "$_eff_client" in
     sdl)
         _RDP_CLIENT=sdl-freerdp3
-        export FREERDP_WLROOTS_HACK=force   # wlroots 64x64 geometry fix
-        export SDL_VIDEODRIVER=wayland      # native Wayland, not XWayland
-        CLIENT_FLAGS=("+grab-keyboard" "/mouse-motion")
-        log_event "INFO" "Cliente SDL (sdl-freerdp3). Multimon soportado."
+        export FREERDP_WLROOTS_HACK=force
+        export SDL_VIDEODRIVER=wayland
+        CLIENT_FLAGS=("+grab-keyboard" "/mouse-motion" "/bpp:16")
+        _gfx_flag="/gfx:avc420"
+        log_event "INFO" "Cliente SDL (sdl-freerdp3). Multimon + perf tuning (avc420, bpp16)."
         ;;
     wayland|wl)
         _RDP_CLIENT=wlfreerdp3
@@ -562,6 +563,7 @@ case "$_eff_client" in
         ;;
     x11|*)
         _RDP_CLIENT=xfreerdp3
+        _gfx_flag="/gfx:avc444"
         ;;
 esac
 
@@ -633,7 +635,7 @@ echo "$PASS_RDP" | { exec 200>&-; ${_RDP_CLIENT} \
   +printer \
   /drive:compartido,"$SHARE_DIR" \
   /network:auto \
-  /gfx:avc444 \
+  ${_gfx_flag} \
   +fonts \
   +aero \
   +auto-reconnect \

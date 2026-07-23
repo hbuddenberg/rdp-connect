@@ -42,18 +42,24 @@ fi
 VERBOSE=0
 NO_AUDIO=0
 MONITOR_MODE_OVERRIDE=""
+MONITORS_OVERRIDE=""            # --monitors <n>   (multi: use first N detected)
+MONITOR_ORDER_OVERRIDE=""       # --monitor-order <ids>  (multi: explicit id order)
+DYNAMIC_RESOLUTION_OVERRIDE=""  # --dynamic-resolution  (single: +dynamic-resolution)
 _new_args=()
-for _a in "$@"; do
-    case "$_a" in
-        -v|--verbose)  VERBOSE=1 ;;
-        --no-audio)    NO_AUDIO=1 ;;
-        --single-mon)  MONITOR_MODE_OVERRIDE=single ;;
-        --multi-mon)    MONITOR_MODE_OVERRIDE=multi ;;
-        *)             _new_args+=("$_a") ;;
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -v|--verbose)         VERBOSE=1; shift ;;
+        --no-audio)           NO_AUDIO=1; shift ;;
+        --single-mon)         MONITOR_MODE_OVERRIDE=single; shift ;;
+        --multi-mon)          MONITOR_MODE_OVERRIDE=multi; shift ;;
+        --dynamic-resolution) DYNAMIC_RESOLUTION_OVERRIDE=1; shift ;;
+        --monitors)           MONITORS_OVERRIDE="${2:-}"; shift; shift || true ;;
+        --monitor-order)      MONITOR_ORDER_OVERRIDE="${2:-}"; shift; shift || true ;;
+        *)                    _new_args+=("$1"); shift ;;
     esac
 done
 set -- "${_new_args[@]}"
-unset _a _new_args
+unset _new_args
 
 # --- MODO AYUDA: rdp-connect --help / -h ---
 # MUST be the FIRST arg-handling block. Runs BEFORE require_cmd (F6) AND before
@@ -76,6 +82,9 @@ Usage:
   rdp-connect --no-audio <profile>  Disable audio redirect (leave sound on remote)
   rdp-connect --single-mon <profile>  Single-monitor fullscreen (MONITOR_ID picks which)
   rdp-connect --multi-mon <profile>    Multi-monitor (default; cramped window under Hyprland)
+  rdp-connect --dynamic-resolution <profile>  Single + windowed: res follows window size live
+  rdp-connect --monitors <n> <profile>        Multi: use first <n> detected monitors
+  rdp-connect --monitor-order <ids> <profile> Multi: use these monitor IDs in this order
   rdp-connect --help | -h        Show this help message
 
 Profiles:  ~/.config/rdp/profiles/*.env
@@ -386,7 +395,7 @@ log_event "INFO" "Puerto 3389 en $HOST respondiendo correctamente."
 compute_dpi_flags
 
 # --- MULTI-MONITOR Y REGLAS DE HYPRLAND ---
-MONITORS=$(hyprctl monitors -j | jq -r '.[].id' | paste -sd, -)
+_MON_IDS=$(hyprctl monitors -j | jq -r '.[].id' | paste -sd, -)
 MON_COUNT=$(hyprctl monitors -j | jq '. | length')
 # F8: MON_FLAGS is an array, not a string. build_mon_flags (in lib) sets
 # MON_FLAGS=("/multimon" "/monitors:<ids>") or ("/f"). Expanded at the
@@ -409,22 +418,51 @@ MON_FLAGS=()
 case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-multi}}" in
     single)
         _EFF_MODE=single
-        # Query the selected client monitor's native resolution and ask FreeRDP
-        # to render the remote desktop at that size, then fullscreen. Without
-        # /size, FreeRDP negotiates a small default (HD on a 2K screen).
-        _mon_res=$(hyprctl monitors -j 2>/dev/null | jq -r --argjson id "${MONITOR_ID:-0}" '.[] | select(.id==$id) | "\(.width)x\(.height)"' 2>/dev/null || true)
-        if [ -n "${_mon_res:-}" ]; then
-            MON_FLAGS=("/size:$_mon_res" "+f")
+        if [ "${DYNAMIC_RESOLUTION_OVERRIDE:-${DYNAMIC_RESOLUTION:-0}}" = "1" ]; then
+            # Dynamic: windowed + resizable. The remote desktop resolution follows
+            # the client window size live (FreeRDP +dynamic-resolution, needs Win8.1+
+            # server — the laptop Win11 supports it). No /size, no +f. The
+            # MONITOR_<id> config does NOT apply here (size tracks the window).
+            MON_FLAGS=("+dynamic-resolution")
+            log_event "INFO" "Modo single-monitor dinámico (+dynamic-resolution, ventana redimensionable)."
         else
-            MON_FLAGS=("+f")
+            # Fixed: render at MONITOR_<id> (config) if set, else the monitor's
+            # native resolution, then fullscreen. MONITOR_<id> is keyed by the
+            # physical monitor id (0-based, matches hyprctl + MONITOR_ID).
+            _mid="${MONITOR_ID:-0}"
+            _mvar="MONITOR_${_mid}"
+            _mon_res="${!_mvar:-}"
+            if [ -z "${_mon_res:-}" ]; then
+                _mon_res=$(hyprctl monitors -j 2>/dev/null | jq -r --argjson id "$_mid" '.[] | select(.id==$id) | "\(.width)x\(.height)"' 2>/dev/null || true)
+            fi
+            if [ -n "${_mon_res:-}" ]; then
+                MON_FLAGS=("/size:$_mon_res" "+f")
+            else
+                MON_FLAGS=("+f")
+            fi
+            log_event "INFO" "Modo single-monitor: monitor ${MONITOR_ID:-0} -> /size:$_mon_res +f fullscreen."
+            unset _mid _mvar _mon_res
         fi
-        unset _mon_res
-        log_event "INFO" "Modo single-monitor: monitor client ${MONITOR_ID:-0} -> /size +f fullscreen."
         ;;
     multi|*)
         _EFF_MODE=multi
-        build_mon_flags "$MON_COUNT" "$MONITORS"
-        log_event "INFO" "Pantallas detectadas en Hyprland: $MON_COUNT (IDs: $MONITORS)."
+        # Build /monitors list. Precedence: --monitor-order flag > MONITOR_ORDER
+        # config > first N of detected (--monitors / MONITORS) > all detected.
+        # NOTE: per-monitor resolution (MONITOR_<id>) is IGNORED in multi —
+        # FreeRDP /multimon uses each monitor's native resolution.
+        _order="${MONITOR_ORDER_OVERRIDE:-${MONITOR_ORDER:-}}"
+        if [ -n "$_order" ]; then
+            MON_FLAGS=("/multimon" "/monitors:$_order")
+        elif [ -n "${MONITORS_OVERRIDE:-${MONITORS:-}}" ]; then
+            _mn="${MONITORS_OVERRIDE:-${MONITORS:-}}"
+            _first=$(printf '%s\n' "$_MON_IDS" | tr ',' '\n' | head -n "$_mn" | paste -sd, -)
+            MON_FLAGS=("/multimon" "/monitors:$_first")
+            unset _first _mn
+        else
+            build_mon_flags "$MON_COUNT" "$_MON_IDS"
+        fi
+        log_event "INFO" "Modo multi-monitor: ${MON_FLAGS[*]}."
+        unset _order
         ;;
 esac
 

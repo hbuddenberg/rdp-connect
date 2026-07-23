@@ -41,6 +41,9 @@ declare -gA _PROFILE_KEYS=(
   [AUDIO_REDIRECT]=1
   [MONITOR_MODE]=1
   [MONITOR_ID]=1
+  [MONITORS]=1
+  [MONITOR_ORDER]=1
+  [DYNAMIC_RESOLUTION]=1
 )
 
 # ---------------------------------------------------------------------------
@@ -106,7 +109,7 @@ parse_env_safe() {
     # key raises "unbound variable" before `[[ -n ]]` can return false. Verified
     # in design and re-verified by tests/parser-probe.sh (runs under `set -u`).
     case "$mode" in
-      profile) [[ -v _PROFILE_KEYS[$key] ]] || { _reject "$file" "$lineno" "rejected key '$key'"; return 1; } ;;
+      profile) [[ -v _PROFILE_KEYS[$key] || "$key" =~ ^MONITOR_[0-9]+$ ]] || { _reject "$file" "$lineno" "rejected key '$key'"; return 1; } ;;
       i18n)    [[ "$key" == MSG_* ]]         || { _reject "$file" "$lineno" "rejected i18n key '$key'"; return 1; } ;;
       *)        _reject "$file" "$lineno" "unknown mode '$mode'"; return 1 ;;
     esac

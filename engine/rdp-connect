@@ -464,6 +464,11 @@ fi
 # `hyprctl dispatch '<lua>'` executes the dispatcher; `class:$WM_CLASS` is the
 # selector. See tests/hyprland-api.bats + wiki/Using-hyprctl.
 (
+    # Close the lock fd so this background subshell does NOT independently hold
+    # the flock — only the main engine process holds it. Otherwise the lock
+    # would persist as long as this helper (or any other child) is alive, even
+    # after the engine exits (the lock-leak root cause).
+    exec 200>&-
     _tries=0
     while [ "$_tries" -lt 30 ]; do
         if hyprctl clients -j 2>/dev/null | jq -e --arg c "$WM_CLASS" 'any(.[]; .class==$c)' >/dev/null 2>&1; then
@@ -491,7 +496,15 @@ notify-send -i display "RDP Framework" "$(printf "$MSG_CONNECTING" "$PROFILE" "$
 log_event "INFO" "Lanzando xfreerdp3 mediante STDIN seguro..."
 
 # --- EJECUCIÓN (Contraseña oculta de la tabla de procesos ps aux) ---
-echo "$PASS_RDP" | xfreerdp3 \
+# xfreerdp3 runs inside a subshell that CLOSES fd 200 (the lock fd), so
+# xfreerdp3 and any process it spawns do NOT inherit the flock. Only the main
+# engine process holds the lock → it releases the instant the engine exits.
+# Output goes to a timestamping logger via process substitution (> >(...)).
+# Unlike a pipeline (`xfreerdp3 | while`), the engine here waits for the
+# { ... } group (i.e. xfreerdp3 itself) to finish — NOT for the pipe to reach
+# EOF — so the engine exits as soon as xfreerdp3 dies, even if orphaned child
+# processes momentarily hold the output pipe open (the lock-leak root cause).
+echo "$PASS_RDP" | { exec 200>&-; xfreerdp3 \
   /v:"$HOST" \
   ${DOMAIN:+/d:"$DOMAIN"} \
   /u:"$USER_RDP" \
@@ -514,10 +527,10 @@ echo "$PASS_RDP" | xfreerdp3 \
   +fonts \
   +aero \
   +auto-reconnect \
-  /auto-reconnect-max-retries:10 2>&1 | while IFS= read -r _rdp_line; do
+  /auto-reconnect-max-retries:10; } > >(while IFS= read -r _rdp_line; do
     _rdp_ts="[$(date '+%Y-%m-%d %H:%M:%S')] [RDP] $_rdp_line"
     printf '%s\n' "$_rdp_ts" >> "$LOG_FILE"
     if [ "${VERBOSE:-0}" = "1" ]; then
         printf '%s\n' "$_rdp_ts" >&2
     fi
-done
+done) 2>&1

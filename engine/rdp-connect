@@ -554,8 +554,8 @@ case "$_eff_client" in
         export FREERDP_WLROOTS_HACK=force
         export SDL_VIDEODRIVER=wayland
         CLIENT_FLAGS=("+grab-keyboard" "/mouse-motion" "/bpp:16")
-        _gfx_flag="/gfx:avc420"
-        log_event "INFO" "Cliente SDL (sdl-freerdp3). Multimon + perf tuning (avc420, bpp16)."
+        _gfx_flag=""   # no /gfx for SDL — bitmap rendering (lighter than H.264)
+        log_event "INFO" "Cliente SDL (sdl-freerdp3). Multimon + sin gfx (bitmap)."
         ;;
     wayland|wl)
         _RDP_CLIENT=wlfreerdp3

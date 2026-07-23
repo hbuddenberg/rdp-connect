@@ -82,8 +82,8 @@ ${C_BOLD}Usage:${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--log${C_R} ${C_KEY}<profile>${C_R}                ${C_DIM}Tail the profile's audit log${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}-v${C_R} ${C_KEY}<profile>${C_R}                   ${C_DIM}Verbose: milestones + xfreerdp3 output on stderr${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--no-audio${C_R} ${C_KEY}<profile>${C_R}           ${C_DIM}Disable audio redirect (sound stays on remote)${C_R}
-  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--single-mon${C_R} ${C_KEY}<profile>${C_R}         ${C_DIM}Single-monitor fullscreen (MONITOR_ID picks which)${C_R}
-  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--multi-mon${C_R} ${C_KEY}<profile>${C_R}          ${C_DIM}Multi-monitor (default; one window under Hyprland)${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--single-mon${C_R} ${C_KEY}<profile>${C_R}         ${C_DIM}Single-monitor fullscreen (DEFAULT; MONITOR_ID picks which)${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--multi-mon${C_R} ${C_KEY}<profile>${C_R}          ${C_DIM}Multi-monitor (all monitors; cramped under Hyprland)${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--dynamic-resolution${C_R} ${C_KEY}<profile>${C_R} ${C_DIM}Single + windowed: res follows window size live${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--monitors${C_R} ${C_KEY}<n>${C_R} ${C_KEY}<profile>${C_R}     ${C_DIM}Multi: use first <n> detected monitors${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--monitor-order${C_R} ${C_KEY}<ids>${C_R} ${C_KEY}<profile>${C_R}  ${C_DIM}Multi: use these monitor IDs in order${C_R}
@@ -455,7 +455,7 @@ MON_COUNT=$(hyprctl monitors -j | jq '. | length')
 # read lets the monitor block skip /monitors: for SDL — it has its own IDs).
 _eff_client="${_client_override:-${CLIENT:-x11}}"
 MON_FLAGS=()
-case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-multi}}" in
+case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
     single)
         _EFF_MODE=single
         if [ "${DYNAMIC_RESOLUTION_OVERRIDE:-${DYNAMIC_RESOLUTION:-0}}" = "1" ]; then

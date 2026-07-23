@@ -55,6 +55,7 @@ while [ $# -gt 0 ]; do
         --dynamic-resolution) DYNAMIC_RESOLUTION_OVERRIDE=1; shift ;;
         --monitors)           MONITORS_OVERRIDE="${2:-}"; shift; shift || true ;;
         --monitor-order)      MONITOR_ORDER_OVERRIDE="${2:-}"; shift; shift || true ;;
+        --client)             _client_override="${2:-}"; shift; shift || true ;;
         *)                    _new_args+=("$1"); shift ;;
     esac
 done
@@ -86,6 +87,7 @@ ${C_BOLD}Usage:${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--dynamic-resolution${C_R} ${C_KEY}<profile>${C_R} ${C_DIM}Single + windowed: res follows window size live${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--monitors${C_R} ${C_KEY}<n>${C_R} ${C_KEY}<profile>${C_R}     ${C_DIM}Multi: use first <n> detected monitors${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--monitor-order${C_R} ${C_KEY}<ids>${C_R} ${C_KEY}<profile>${C_R}  ${C_DIM}Multi: use these monitor IDs in order${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--client${C_R} ${C_KEY}<x11|sdl|wayland>${C_R} ${C_KEY}<profile>${C_R}  ${C_DIM}Choose the FreeRDP client binary${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--help${C_R} | ${C_FLAG}-h${C_R}                  ${C_DIM}Show this help message${C_R}
 
 ${C_BOLD}Profiles:${C_R}   ${C_DIM}~/.config/rdp/profiles/*.env${C_R}
@@ -529,6 +531,30 @@ else
     SOUND_FLAGS=("/audio-mode:1")
 fi
 
+# --- CLIENT SELECTION (x11 [default] | sdl | wayland) ---
+# Selects the FreeRDP binary + client-specific env + extra flags.
+#   x11     -> xfreerdp3    (XWayland; best for single-mon)
+#   sdl     -> sdl-freerdp3 (SDL3; multimon 3-ventanas con wlroots hack + grab flags)
+#   wayland -> wlfreerdp3   (native Wayland; single-mon only — no multimon)
+_eff_client="${_client_override:-${CLIENT:-x11}}"
+CLIENT_FLAGS=()
+case "$_eff_client" in
+    sdl)
+        _RDP_CLIENT=sdl-freerdp3
+        export FREERDP_WLROOTS_HACK=force   # wlroots 64x64 geometry fix
+        export SDL_VIDEODRIVER=wayland      # native Wayland, not XWayland
+        CLIENT_FLAGS=("+grab-keyboard" "/mouse-motion")
+        log_event "INFO" "Cliente SDL (sdl-freerdp3). Multimon soportado."
+        ;;
+    wayland|wl)
+        _RDP_CLIENT=wlfreerdp3
+        log_event "INFO" "Cliente Wayland nativo (wlfreerdp3). Single-mon."
+        ;;
+    x11|*)
+        _RDP_CLIENT=xfreerdp3
+        ;;
+esac
+
 # --- BACKGROUND WINDOW MANAGEMENT (Hyprland 0.55+ Lua dispatcher API) ---
 # The new API is action-based (the window must already exist), but xfreerdp3
 # hasn't created it yet. Spawn a background subshell that polls for the window
@@ -577,7 +603,7 @@ log_event "INFO" "Lanzando xfreerdp3 mediante STDIN seguro..."
 # { ... } group (i.e. xfreerdp3 itself) to finish — NOT for the pipe to reach
 # EOF — so the engine exits as soon as xfreerdp3 dies, even if orphaned child
 # processes momentarily hold the output pipe open (the lock-leak root cause).
-echo "$PASS_RDP" | { exec 200>&-; xfreerdp3 \
+echo "$PASS_RDP" | { exec 200>&-; ${_RDP_CLIENT} \
   /v:"$HOST" \
   ${DOMAIN:+/d:"$DOMAIN"} \
   /u:"$USER_RDP" \
@@ -591,6 +617,7 @@ echo "$PASS_RDP" | { exec 200>&-; xfreerdp3 \
   /async-update \
   /mouse-motion \
   "${SOUND_FLAGS[@]}" \
+  "${CLIENT_FLAGS[@]}" \
   +clipboard \
   +smartcard \
   +printer \

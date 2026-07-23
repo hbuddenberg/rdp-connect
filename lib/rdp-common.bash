@@ -44,6 +44,7 @@ declare -gA _PROFILE_KEYS=(
   [MONITORS]=1
   [MONITOR_ORDER]=1
   [DYNAMIC_RESOLUTION]=1
+  [CLIENT]=1
 )
 
 # ---------------------------------------------------------------------------

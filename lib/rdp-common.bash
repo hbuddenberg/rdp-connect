@@ -395,32 +395,36 @@ setup_colors() {
 # ---------------------------------------------------------------------------
 # Profile migrator helpers (used by `rdp-connect --update-profiles`)
 # ---------------------------------------------------------------------------
-# Idempotently append a documented monitor-layout block to a profile so existing
-# profiles learn the new keys (MONITORS/MONITOR_ORDER/MONITOR_<id>/
-# DYNAMIC_RESOLUTION) as commented-out options. Never overwrites real values.
-PROFILE_MONITOR_MARKER='# --- monitor layout'
+# Idempotently append a documented block listing EVERY tunable key (audio +
+# monitor mode + monitor layout) to a profile, so profiles created before these
+# features learn the full set as commented options. Never overwrites real
+# values — keys are commented out, the user uncomments what they want.
+PROFILE_TUNABLES_MARKER='# --- rdp-connect tunables'
 
-profile_has_monitor_block() {
+profile_has_tunables_block() {
   [ -f "$1" ] || return 1
-  grep -qF "$PROFILE_MONITOR_MARKER" "$1" 2>/dev/null
+  grep -qF "$PROFILE_TUNABLES_MARKER" "$1" 2>/dev/null
 }
 
-append_monitor_block() {
-  # Returns 0 in both cases (already-present OR just-appended) so the caller can
-  # treat any non-failure as success. A non-zero return only on missing file.
+append_tunables_block() {
+  # Returns 0 whether the block was already present or just added, so the caller
+  # treats any non-failure as success. Non-zero only on missing file.
   [ -f "$1" ] || return 1
-  profile_has_monitor_block "$1" && return 0
-  cat >> "$1" <<'EOF_MONITOR_BLOCK'
+  profile_has_tunables_block "$1" && return 0
+  cat >> "$1" <<'EOF_TUNABLES_BLOCK'
 
-# --- monitor layout (added by `rdp-connect --update-profiles`; all optional) ---
-# Precedence: CLI flag > these > computed default. MONITOR_<id> is 0-based
-# (matches `hyprctl monitors` ids and MONITOR_ID). Per-monitor resolution is
-# only honored in single mode (FreeRDP /multimon uses native res per monitor).
-# MONITORS=3                      # multi: use first N detected monitors
-# MONITOR_ORDER=1,3,2             # multi: physical IDs in this order (-> /monitors:)
-# MONITOR_0=1920x1080             # single: resolution for monitor id 0
+# --- rdp-connect tunables (added by `rdp-connect --update-profiles`; all optional) ---
+# Precedence: CLI flag > these > computed default. Uncomment & set what you need.
+# MONITOR_<id> is 0-based (matches `hyprctl monitors` ids); per-monitor resolution
+# is only honored in single mode (FreeRDP /multimon uses native res per monitor).
+# AUDIO_REDIRECT=1            # 1=redirect audio to client (default); 0=play on remote
+# MONITOR_MODE=multi          # multi (default) | single
+# MONITOR_ID=0                # single: which monitor (0-based hyprctl id)
+# MONITORS=3                  # multi: use first N detected monitors
+# MONITOR_ORDER=1,3,2         # multi: physical IDs in this order (-> /monitors:)
+# MONITOR_0=1920x1080         # single: resolution for monitor id 0
 # MONITOR_1=1920x1080
 # MONITOR_2=2560x1440
-# DYNAMIC_RESOLUTION=1            # single: windowed, res follows window (Win8.1+ server)
-EOF_MONITOR_BLOCK
+# DYNAMIC_RESOLUTION=1        # single: windowed, res follows window (Win8.1+ server)
+EOF_TUNABLES_BLOCK
 }

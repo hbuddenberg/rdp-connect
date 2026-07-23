@@ -169,7 +169,7 @@ fi
 # profile, so profiles created before this feature learn the new keys as
 # documented options. Backs up each modified profile to <name>.env.bak.<ts>;
 # skips profiles that already have the block. Never overwrites real values.
-# append_monitor_block / profile_has_monitor_block live in lib/rdp-common.bash.
+# append_tunables_block / profile_has_tunables_block live in lib/rdp-common.bash.
 if [ "${1:-}" == "--update-profiles" ]; then
     _updated=0; _skipped=0; _ts="$(date +%s)"
     if [ ! -d "$PROFILES_DIR" ]; then
@@ -178,12 +178,12 @@ if [ "${1:-}" == "--update-profiles" ]; then
     fi
     for _f in "$PROFILES_DIR"/*.env; do
         [ -f "$_f" ] || continue
-        if profile_has_monitor_block "$_f"; then
+        if profile_has_tunables_block "$_f"; then
             _skipped=$((_skipped+1))
             printf '  %sskip%s    %s (already has monitor block)\n' "${C_DIM:-}" "${C_R:-}" "$(basename "$_f")"
             continue
         fi
-        if cp -p "$_f" "$_f.bak.$_ts" && append_monitor_block "$_f"; then
+        if cp -p "$_f" "$_f.bak.$_ts" && append_tunables_block "$_f"; then
             _updated=$((_updated+1))
             printf '  %supdate%s  %s (backup: %s.bak.%s)\n' "${C_FLAG:-}" "${C_R:-}" "$(basename "$_f")" "$(basename "$_f")" "$_ts"
         else

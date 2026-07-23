@@ -61,35 +61,38 @@ done
 set -- "${_new_args[@]}"
 unset _new_args
 
-# --- MODO AYUDA: rdp-connect --help / -h ---
-# MUST be the FIRST arg-handling block. Runs BEFORE require_cmd (F6) AND before
-# the lib source / mkdir setup so `--help` is a pure documentation path that
-# works in any HOME (including throwaway HOME from `make smoke` and CI probes).
-# Standard Unix convention: `--help` exits 0 with no side effects.
-# Previously this block sat at line 25, AFTER `mkdir -p` + `source "$LIB_FILE"`
-# at lines 15-19, which caused `make smoke` (HOME=$(mktemp -d)) to fail at the
-# source step before --help could fire. See verify-report-pr1 W-5.
+# --- COLORS (rich-like) + MODO AYUDA: rdp-connect --help / -h ---
+# setup_colors (in lib) populates C_* only when stdout is a TTY and NO_COLOR is
+# unset. The lib is fully sourced later (L108); here we source it ONLY if the
+# file exists so --help can colorize. `make smoke` runs --help in a throwaway
+# HOME without the deployed lib -> we degrade to plain help (C_* empty) and still
+# exit 0 (preserves the W-5 fix: --help works without the lib/mkdir setup).
+C_TITLE="" C_CMD="" C_FLAG="" C_KEY="" C_DIM="" C_BOLD="" C_R=""
+[ -f "$HOME/.local/lib/rdp/rdp-common.bash" ] && source "$HOME/.local/lib/rdp/rdp-common.bash" && setup_colors
 if [ "${1:-}" == "--help" ] || [ "${1:-}" == "-h" ]; then
-    cat << 'HELP_EOF'
-rdp-connect — RDP connection framework for Hyprland/Wayland (xfreerdp3)
+    cat << HELP_EOF
+${C_TITLE}rdp-connect${C_R} ${C_DIM}— RDP connection framework for Hyprland/Wayland (xfreerdp3)${C_R}
 
-Usage:
-  rdp-connect                    Open graphical selector (wofi/rofi)
-  rdp-connect <profile>          Direct connection to a profile
-  rdp-connect --new <name>       Create a new profile from template
-  rdp-connect --log <profile>    Tail the profile's audit log
-  rdp-connect -v <profile>       Verbose: tee milestones + xfreerdp3 output to stderr
-  rdp-connect --no-audio <profile>  Disable audio redirect (leave sound on remote)
-  rdp-connect --single-mon <profile>  Single-monitor fullscreen (MONITOR_ID picks which)
-  rdp-connect --multi-mon <profile>    Multi-monitor (default; cramped window under Hyprland)
-  rdp-connect --dynamic-resolution <profile>  Single + windowed: res follows window size live
-  rdp-connect --monitors <n> <profile>        Multi: use first <n> detected monitors
-  rdp-connect --monitor-order <ids> <profile> Multi: use these monitor IDs in this order
-  rdp-connect --help | -h        Show this help message
+${C_BOLD}Usage:${C_R}
+  ${C_CMD}rdp-connect${C_R}                              ${C_DIM}Open graphical selector (wofi/rofi)${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}<profile>${C_R}                        ${C_DIM}Direct connection to a profile${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--new${C_R} ${C_KEY}<name>${C_R}                   ${C_DIM}Create a new profile from template${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--update-profiles${C_R}                 ${C_DIM}Add monitor-layout keys to existing profiles${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--log${C_R} ${C_KEY}<profile>${C_R}                ${C_DIM}Tail the profile's audit log${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}-v${C_R} ${C_KEY}<profile>${C_R}                   ${C_DIM}Verbose: milestones + xfreerdp3 output on stderr${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--no-audio${C_R} ${C_KEY}<profile>${C_R}           ${C_DIM}Disable audio redirect (sound stays on remote)${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--single-mon${C_R} ${C_KEY}<profile>${C_R}         ${C_DIM}Single-monitor fullscreen (MONITOR_ID picks which)${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--multi-mon${C_R} ${C_KEY}<profile>${C_R}          ${C_DIM}Multi-monitor (default; one window under Hyprland)${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--dynamic-resolution${C_R} ${C_KEY}<profile>${C_R} ${C_DIM}Single + windowed: res follows window size live${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--monitors${C_R} ${C_KEY}<n>${C_R} ${C_KEY}<profile>${C_R}     ${C_DIM}Multi: use first <n> detected monitors${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--monitor-order${C_R} ${C_KEY}<ids>${C_R} ${C_KEY}<profile>${C_R}  ${C_DIM}Multi: use these monitor IDs in order${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--help${C_R} | ${C_FLAG}-h${C_R}                  ${C_DIM}Show this help message${C_R}
 
-Profiles:  ~/.config/rdp/profiles/*.env
-Logs:      ~/.local/state/rdp/<profile>.log
-Lockfile:  ${XDG_RUNTIME_DIR:-/tmp}/rdp-<profile>-<uid>.pid
+${C_BOLD}Profiles:${C_R}   ${C_DIM}~/.config/rdp/profiles/*.env${C_R}
+${C_BOLD}Monitor keys:${C_R} ${C_KEY}MONITORS${C_R}, ${C_KEY}MONITOR_ORDER${C_R}, ${C_KEY}MONITOR_<id>${C_R}, ${C_KEY}DYNAMIC_RESOLUTION${C_R} ${C_DIM}(run --update-profiles to add them)${C_R}
+${C_BOLD}Logs:${C_R}       ${C_DIM}~/.local/state/rdp/<profile>.log${C_R}
+${C_BOLD}Lockfile:${C_R}   ${C_DIM}${XDG_RUNTIME_DIR:-/tmp}/rdp-<profile>-<uid>.pid${C_R}
+${C_DIM}Set NO_COLOR=1 to disable colors.${C_R}
 HELP_EOF
     exit 0
 fi
@@ -157,6 +160,38 @@ if [ "${1:-}" == "--log" ] || [ "${1:-}" == "-l" ]; then
     [ ! -f "$TARGET_LOG" ] && { printf "$MSG_LOG_NO_FILE\n" "$LOG_PROFILE"; exit 1; }
     echo "=== Viendo log en vivo de '$LOG_PROFILE' ($TARGET_LOG) ==="
     tail -n 30 -f "$TARGET_LOG"
+    exit 0
+fi
+
+# --- MODO ACTUALIZAR PROFILES: rdp-connect --update-profiles ---
+# Idempotently append the monitor-layout block (MONITORS / MONITOR_ORDER /
+# MONITOR_<id> / DYNAMIC_RESOLUTION, all commented out) to every existing
+# profile, so profiles created before this feature learn the new keys as
+# documented options. Backs up each modified profile to <name>.env.bak.<ts>;
+# skips profiles that already have the block. Never overwrites real values.
+# append_monitor_block / profile_has_monitor_block live in lib/rdp-common.bash.
+if [ "${1:-}" == "--update-profiles" ]; then
+    _updated=0; _skipped=0; _ts="$(date +%s)"
+    if [ ! -d "$PROFILES_DIR" ]; then
+        printf '%sno profiles dir: %s%s\n' "${C_DIM:-}" "$PROFILES_DIR" "${C_R:-}"
+        exit 1
+    fi
+    for _f in "$PROFILES_DIR"/*.env; do
+        [ -f "$_f" ] || continue
+        if profile_has_monitor_block "$_f"; then
+            _skipped=$((_skipped+1))
+            printf '  %sskip%s    %s (already has monitor block)\n' "${C_DIM:-}" "${C_R:-}" "$(basename "$_f")"
+            continue
+        fi
+        if cp -p "$_f" "$_f.bak.$_ts" && append_monitor_block "$_f"; then
+            _updated=$((_updated+1))
+            printf '  %supdate%s  %s (backup: %s.bak.%s)\n' "${C_FLAG:-}" "${C_R:-}" "$(basename "$_f")" "$(basename "$_f")" "$_ts"
+        else
+            printf '  %sFAIL%s   %s (backup/append failed)\n' "${C_TITLE:-}" "${C_R:-}" "$(basename "$_f")"
+        fi
+    done
+    printf '\n%supdated:%s %d   %sskipped:%s %d\n' "${C_CMD:-}" "${C_R:-}" "$_updated" "${C_DIM:-}" "${C_R:-}" "$_skipped"
+    unset _updated _skipped _ts _f
     exit 0
 fi
 

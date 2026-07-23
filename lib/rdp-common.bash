@@ -366,3 +366,61 @@ log_event() {
     printf '%s\n' "$line" >&2
   fi
 }
+
+# ---------------------------------------------------------------------------
+# setup_colors — ANSI color globals for the colored --help (rich-like)
+# ---------------------------------------------------------------------------
+# Populates C_* globals. Colorize ONLY when:
+#   - NO_COLOR is unset (respects https://no-color.org), AND
+#   - stdout is a TTY, OR RDP_FORCE_COLOR=1 (lets tests/force force it).
+# When disabled, every C_* is empty so callers can interpolate unconditionally
+# ($C_TITLE text $C_R) and the output is plain. Pure logic over globals ->
+# unit-testable (tests/ui-helpers.bats).
+setup_colors() {
+  if [ -z "${NO_COLOR:-}" ] && { [ -t 1 ] || [ "${RDP_FORCE_COLOR:-0}" = "1" ]; }; then
+    # shellcheck disable=SC2034  # C_* consumed by engine/rdp-connect (sourced-lib pattern)
+    C_TITLE=$'\033[1;36m'   # bold cyan   — section titles
+    C_CMD=$'\033[1;32m'     # bold green  — the rdp-connect command
+    C_FLAG=$'\033[1;33m'    # bold yellow — CLI flags
+    C_KEY=$'\033[1;35m'     # bold magenta— profile keys
+    C_DIM=$'\033[2m'        # dim         — descriptions/paths
+    C_BOLD=$'\033[1m'
+    C_R=$'\033[0m'          # reset
+  else
+    # shellcheck disable=SC2034  # see above
+    C_TITLE="" C_CMD="" C_FLAG="" C_KEY="" C_DIM="" C_BOLD="" C_R=""
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Profile migrator helpers (used by `rdp-connect --update-profiles`)
+# ---------------------------------------------------------------------------
+# Idempotently append a documented monitor-layout block to a profile so existing
+# profiles learn the new keys (MONITORS/MONITOR_ORDER/MONITOR_<id>/
+# DYNAMIC_RESOLUTION) as commented-out options. Never overwrites real values.
+PROFILE_MONITOR_MARKER='# --- monitor layout'
+
+profile_has_monitor_block() {
+  [ -f "$1" ] || return 1
+  grep -qF "$PROFILE_MONITOR_MARKER" "$1" 2>/dev/null
+}
+
+append_monitor_block() {
+  # Returns 0 in both cases (already-present OR just-appended) so the caller can
+  # treat any non-failure as success. A non-zero return only on missing file.
+  [ -f "$1" ] || return 1
+  profile_has_monitor_block "$1" && return 0
+  cat >> "$1" <<'EOF_MONITOR_BLOCK'
+
+# --- monitor layout (added by `rdp-connect --update-profiles`; all optional) ---
+# Precedence: CLI flag > these > computed default. MONITOR_<id> is 0-based
+# (matches `hyprctl monitors` ids and MONITOR_ID). Per-monitor resolution is
+# only honored in single mode (FreeRDP /multimon uses native res per monitor).
+# MONITORS=3                      # multi: use first N detected monitors
+# MONITOR_ORDER=1,3,2             # multi: physical IDs in this order (-> /monitors:)
+# MONITOR_0=1920x1080             # single: resolution for monitor id 0
+# MONITOR_1=1920x1080
+# MONITOR_2=2560x1440
+# DYNAMIC_RESOLUTION=1            # single: windowed, res follows window (Win8.1+ server)
+EOF_MONITOR_BLOCK
+}

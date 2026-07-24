@@ -306,6 +306,7 @@ START_TIME=$(date +%s)
 _LOCK_ACQUIRED=false
 # Read the existing PID BEFORE truncating the file with exec 200> below.
 # (exec 200> truncates; reading after would always get empty.)
+# shellcheck disable=SC2188  # $(<file) is the bash no-fork file-read idiom
 _peer=$(<"$PID_FILE" 2>/dev/null || true)
 exec 200>"$PID_FILE"
 if ! flock -n 200; then

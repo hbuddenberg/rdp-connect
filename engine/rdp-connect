@@ -304,18 +304,35 @@ START_TIME=$(date +%s)
 # own the lock — unlinking the file would break the first instance's per-inode
 # flock and allow a third instance to bypass it.
 _LOCK_ACQUIRED=false
+# Read the existing PID BEFORE truncating the file with exec 200> below.
+# (exec 200> truncates; reading after would always get empty.)
+_peer=$(<"$PID_FILE" 2>/dev/null || true)
 exec 200>"$PID_FILE"
 if ! flock -n 200; then
-    # shellcheck disable=SC2188  # $(<file) is the bash no-fork file-read idiom; 2>/dev/null + || true handle missing/unreadable files (peer holds lock but file content may be empty if peer crashed before writing)
-    _peer=$(<"$PID_FILE" 2>/dev/null || true)
-    log_event "WARN" "Instancia activa pid=${_peer:-?} detectada. Enfocando ventana..."
-    notify-send -i display "RDP $PROFILE" "$MSG_ALREADY_ACTIVE" || true
-    # Hyprland 0.55+: focus the peer's existing window via the Lua dispatcher
-    # (`hyprctl dispatch '<lua>'`). The legacy `focuswindow class:...` form was
-    # rejected by the new parser. Window already exists in this path.
-    hyprctl dispatch "hl.dsp.focus({ window = \"class:$WM_CLASS\" })" &>/dev/null || true
-    exit 0
+    # An existing session for this profile is active. KILL it so we can relaunch
+    # (the user wants replace, not focus-and-exit). The peer runs under setsid
+    # (own session/group), so kill its process group to reap engine + xfreerdp3.
+    if [ -n "$_peer" ] && kill -0 "$_peer" 2>/dev/null; then
+        log_event "WARN" "Instancia activa pid=$_peer. Matando para relanzar..."
+        notify-send -i display "RDP $PROFILE" "Cerrando sesión previa (pid=$_peer)..." || true
+        kill -- "-$_peer" 2>/dev/null || kill "$_peer" 2>/dev/null || true
+        sleep 1
+        kill -0 "$_peer" 2>/dev/null && { kill -9 -- "-$_peer" 2>/dev/null || kill -9 "$_peer" 2>/dev/null || true; }
+        sleep 0.5
+    fi
+    # Also kill any stray FreeRDP process matching this profile's WM_CLASS
+    pkill -f "wm-class:$WM_CLASS" 2>/dev/null || true
+    sleep 0.5
+    # Try to reclaim the lock
+    if flock -n 200; then
+        log_event "INFO" "Lock reclamado. Relanzando sesión."
+    else
+        log_event "ERROR" "No se pudo adquirir el lock tras matar la instancia previa."
+        notify-send -u critical "RDP Error" "No se pudo relanzar $PROFILE (lock atascado)." || true
+        exit 1
+    fi
 fi
+unset _peer
 _LOCK_ACQUIRED=true
 echo "$$" >&200
 

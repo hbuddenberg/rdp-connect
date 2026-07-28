@@ -249,7 +249,7 @@ if [ -z "$PROFILE" ]; then
         _pu=$(grep -m1 '^USER_RDP=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
         _line="󰍹 ${_pn}"
         [ -n "$_ph" ] && _line="${_line}    ${_ph}"
-        [ -n "$_pu" ] && _line="${_line}    ${_pu}"
+        [ -n "$_pu" ] && _line="${_line}    ${_pu} "
         MENU_ITEMS+=("$_line")
     done
     # Dynamic box height: ~45px per entry + 80px search/padding, min 200, cap 800.

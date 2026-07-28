@@ -252,12 +252,15 @@ if [ -z "$PROFILE" ]; then
         [ -n "$_pu" ] && _line="${_line}    ${_pu}"
         MENU_ITEMS+=("$_line")
     done
-    # Dynamic box height: ~35px per entry + 60px search/padding, capped at 800.
-    _box_h=$(( (${#MENU_ITEMS[@]} * 35) + 60 ))
+    # Dynamic box height: ~45px per entry + 80px search/padding, min 200, cap 800.
+    # IMPORTANT: walker says "DON'T USE SHORTHAND" for -h (conflicts with --help).
+    # Must use --height (long form).
+    _box_h=$(( (${#MENU_ITEMS[@]} * 45) + 80 ))
+    [ "$_box_h" -lt 200 ] && _box_h=200
     [ "$_box_h" -gt 800 ] && _box_h=800
     _sel=""
     if command -v walker &>/dev/null; then
-        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | walker -d -N --placeholder="🖥 RDP Connect" --width=950 --maxwidth=950 -h "$_box_h" 2>/dev/null || true)
+        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | walker -d -N --placeholder="🖥 RDP Connect" --width=950 --maxwidth=950 --height="$_box_h" 2>/dev/null || true)
     elif command -v wofi &>/dev/null; then
         _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | wofi -d -p "🖥 RDP Connect" -W 950 -H "$_box_h" --cache-file=/dev/null 2>/dev/null || true)
     elif command -v rofi &>/dev/null; then

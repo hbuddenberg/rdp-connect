@@ -241,9 +241,11 @@ if [ -z "$PROFILE" ]; then
         exit 127
     fi
     if command -v wofi &>/dev/null; then
-        PROFILE=$(ls "$PROFILES_DIR" | sed 's/\.env$//' | wofi --dmenu --prompt "$MSG_PROMPT_SELECT" || true)
+        # find -name '*.env' excludes backups (.env.bak.* don't end in .env).
+        # basename strips path + extension in one step. -i = case-insensitive.
+        PROFILE=$(find "$PROFILES_DIR" -maxdepth 1 -name '*.env' -exec basename {} .env \; 2>/dev/null | sort | wofi --dmenu --prompt " RDP Connect" -i --cache-file=/dev/null || true)
     elif command -v rofi &>/dev/null; then
-        PROFILE=$(ls "$PROFILES_DIR" | sed 's/\.env$//' | rofi -dmenu -p "$MSG_PROMPT_SELECT" || true)
+        PROFILE=$(find "$PROFILES_DIR" -maxdepth 1 -name '*.env' -exec basename {} .env \; 2>/dev/null | sort | rofi -dmenu -p "RDP Connect" -i || true)
     fi
 fi
 [ -z "$PROFILE" ] && exit 0

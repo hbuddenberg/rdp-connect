@@ -252,14 +252,16 @@ if [ -z "$PROFILE" ]; then
         [ -n "$_pu" ] && _line="${_line}    ${_pu}"
         MENU_ITEMS+=("$_line")
     done
-    # Render menu — dynamic width/height (auto-sizes to content + profile count).
+    # Dynamic box height: ~35px per entry + 60px search/padding, capped at 800.
+    _box_h=$(( (${#MENU_ITEMS[@]} * 35) + 60 ))
+    [ "$_box_h" -gt 800 ] && _box_h=800
     _sel=""
     if command -v walker &>/dev/null; then
-        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | walker -d -N --placeholder="🖥 RDP Connect" --width=900 --maxwidth=900 2>/dev/null || true)
+        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | walker -d -N --placeholder="🖥 RDP Connect" --width=950 --maxwidth=950 -h "$_box_h" 2>/dev/null || true)
     elif command -v wofi &>/dev/null; then
-        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | wofi -d -p "🖥 RDP Connect" -W 900 --cache-file=/dev/null 2>/dev/null || true)
+        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | wofi -d -p "🖥 RDP Connect" -W 950 -H "$_box_h" --cache-file=/dev/null 2>/dev/null || true)
     elif command -v rofi &>/dev/null; then
-        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | rofi -dmenu -p "🖥 RDP Connect" -i -l 10 2>/dev/null || true)
+        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | rofi -dmenu -p "🖥 RDP Connect" -i -l "${#MENU_ITEMS[@]}" 2>/dev/null || true)
     fi
     # Extract profile name: strip the icon prefix, then first field before sep.
     _stripped="${_sel#* }"

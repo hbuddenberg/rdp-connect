@@ -240,27 +240,31 @@ if [ -z "$PROFILE" ]; then
         echo "missing required command: wofi or rofi (install one via your package manager)" >&2
         exit 127
     fi
-    # Build a display list: "profile_name    HOST    user" (4-space separator).
-    # Only *.env files (backups excluded). HOST/USER extracted via grep+sed.
-    _profile_list=""
+    # Build menu items with Nerd Font icon + HOST + USER (hyprcaffeine style).
+    MENU_ITEMS=()
     for _pf in "$PROFILES_DIR"/*.env; do
         [ -f "$_pf" ] || continue
         _pn=$(basename "$_pf" .env)
         _ph=$(grep -m1 '^HOST=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
         _pu=$(grep -m1 '^USER_RDP=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
-        _line="$_pn"
+        _line="󰍹 ${_pn}"
         [ -n "$_ph" ] && _line="${_line}    ${_ph}"
         [ -n "$_pu" ] && _line="${_line}    ${_pu}"
-        _profile_list="${_profile_list:+${_profile_list}\n}${_line}"
+        MENU_ITEMS+=("$_line")
     done
-    if command -v wofi &>/dev/null; then
-        _sel=$(printf '%b\n' "$_profile_list" | wofi --dmenu --prompt " RDP Connect" -i --cache-file=/dev/null || true)
+    # Render menu — walker preferred (same flags as hyprcaffeine), then wofi, rofi.
+    _sel=""
+    if command -v walker &>/dev/null; then
+        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | walker -d -N -H --placeholder="🖥 RDP Connect" --maxheight=700 --width=330 2>/dev/null || true)
+    elif command -v wofi &>/dev/null; then
+        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | wofi -d -p "🖥 RDP Connect" -W 320 -H 320 --cache-file=/dev/null 2>/dev/null || true)
     elif command -v rofi &>/dev/null; then
-        _sel=$(printf '%b\n' "$_profile_list" | rofi -dmenu -p "RDP Connect" -i || true)
+        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | rofi -dmenu -p "🖥 RDP Connect" -i -l 10 2>/dev/null || true)
     fi
-    # Extract profile name (first field before the 4-space separator).
-    PROFILE="${_sel%%    *}"
-    unset _pf _pn _ph _pu _line _profile_list _sel
+    # Extract profile name: strip the icon prefix, then first field before sep.
+    _stripped="${_sel#* }"
+    PROFILE="${_stripped%%    *}"
+    unset _pf _pn _ph _pu _line _sel _stripped MENU_ITEMS
 fi
 [ -z "$PROFILE" ] && exit 0
 

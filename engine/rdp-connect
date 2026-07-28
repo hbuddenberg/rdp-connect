@@ -246,18 +246,18 @@ if [ -z "$PROFILE" ]; then
         [ -f "$_pf" ] || continue
         _pn=$(basename "$_pf" .env)
         _ph=$(grep -m1 '^HOST=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
-        _pu=$(grep -m1 '^USER_RDP=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' | cut -d@ -f1 || true)
+        _pu=$(grep -m1 '^USER_RDP=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
         _line="󰍹 ${_pn}"
         [ -n "$_ph" ] && _line="${_line}    ${_ph}"
         [ -n "$_pu" ] && _line="${_line}    ${_pu}"
         MENU_ITEMS+=("$_line")
     done
-    # Render menu — walker preferred (same flags as hyprcaffeine), then wofi, rofi.
+    # Render menu — dynamic width/height (auto-sizes to content + profile count).
     _sel=""
     if command -v walker &>/dev/null; then
-        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | walker -d -N -H --placeholder="🖥 RDP Connect" --maxheight=700 --width=700 2>/dev/null || true)
+        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | walker -d -N --placeholder="🖥 RDP Connect" --width=900 --maxwidth=900 2>/dev/null || true)
     elif command -v wofi &>/dev/null; then
-        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | wofi -d -p "🖥 RDP Connect" -W 700 -H 320 --cache-file=/dev/null 2>/dev/null || true)
+        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | wofi -d -p "🖥 RDP Connect" -W 900 --cache-file=/dev/null 2>/dev/null || true)
     elif command -v rofi &>/dev/null; then
         _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | rofi -dmenu -p "🖥 RDP Connect" -i -l 10 2>/dev/null || true)
     fi

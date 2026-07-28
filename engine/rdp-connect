@@ -240,13 +240,27 @@ if [ -z "$PROFILE" ]; then
         echo "missing required command: wofi or rofi (install one via your package manager)" >&2
         exit 127
     fi
+    # Build a display list: "profile_name    HOST    user" (4-space separator).
+    # Only *.env files (backups excluded). HOST/USER extracted via grep+sed.
+    _profile_list=""
+    for _pf in "$PROFILES_DIR"/*.env; do
+        [ -f "$_pf" ] || continue
+        _pn=$(basename "$_pf" .env)
+        _ph=$(grep -m1 '^HOST=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
+        _pu=$(grep -m1 '^USER_RDP=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
+        _line="$_pn"
+        [ -n "$_ph" ] && _line="${_line}    ${_ph}"
+        [ -n "$_pu" ] && _line="${_line}    ${_pu}"
+        _profile_list="${_profile_list:+${_profile_list}\n}${_line}"
+    done
     if command -v wofi &>/dev/null; then
-        # find -name '*.env' excludes backups (.env.bak.* don't end in .env).
-        # basename strips path + extension in one step. -i = case-insensitive.
-        PROFILE=$(find "$PROFILES_DIR" -maxdepth 1 -name '*.env' -exec basename {} .env \; 2>/dev/null | sort | wofi --dmenu --prompt " RDP Connect" -i --cache-file=/dev/null || true)
+        _sel=$(printf '%b\n' "$_profile_list" | wofi --dmenu --prompt " RDP Connect" -i --cache-file=/dev/null || true)
     elif command -v rofi &>/dev/null; then
-        PROFILE=$(find "$PROFILES_DIR" -maxdepth 1 -name '*.env' -exec basename {} .env \; 2>/dev/null | sort | rofi -dmenu -p "RDP Connect" -i || true)
+        _sel=$(printf '%b\n' "$_profile_list" | rofi -dmenu -p "RDP Connect" -i || true)
     fi
+    # Extract profile name (first field before the 4-space separator).
+    PROFILE="${_sel%%    *}"
+    unset _pf _pn _ph _pu _line _profile_list _sel
 fi
 [ -z "$PROFILE" ] && exit 0
 

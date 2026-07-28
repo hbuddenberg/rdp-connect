@@ -249,7 +249,7 @@ if [ -z "$PROFILE" ]; then
         _pu=$(grep -m1 '^USER_RDP=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
         _line="󰍹 ${_pn}"
         [ -n "$_ph" ] && _line="${_line}    ${_ph}"
-        [ -n "$_pu" ] && _line="${_line}    ${_pu} "
+        [ -n "$_pu" ] && _line="${_line}    ${_pu}"
         MENU_ITEMS+=("$_line")
     done
     # Dynamic box height: ~45px per entry + 80px search/padding, min 200, cap 800.
@@ -260,9 +260,9 @@ if [ -z "$PROFILE" ]; then
     [ "$_box_h" -gt 800 ] && _box_h=800
     _sel=""
     if command -v walker &>/dev/null; then
-        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | walker -d -N --placeholder="🖥 RDP Connect" --width=950 --maxwidth=950 --height="$_box_h" 2>/dev/null || true)
+        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | walker -d -N --placeholder="🖥 RDP Connect" --width=1050 --maxwidth=1050 --height="$_box_h" 2>/dev/null || true)
     elif command -v wofi &>/dev/null; then
-        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | wofi -d -p "🖥 RDP Connect" -W 950 -H "$_box_h" --cache-file=/dev/null 2>/dev/null || true)
+        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | wofi -d -p "🖥 RDP Connect" -W 1050 -H "$_box_h" --cache-file=/dev/null 2>/dev/null || true)
     elif command -v rofi &>/dev/null; then
         _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | rofi -dmenu -p "🖥 RDP Connect" -i -l "${#MENU_ITEMS[@]}" 2>/dev/null || true)
     fi

@@ -53,9 +53,24 @@ load test_helper
 @test "engine_builds_size_flag_from_span_canvas" {
   local engine="${REPO_ROOT}/engine/rdp-connect"
   [ -f "$engine" ] || fail "engine missing at $engine"
-  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF '/size:\${_span_w}x\${_span_h}'"
+  # _SPAN_W/_SPAN_H (uppercase — renamed so they persist to the background
+  # dispatcher subshell for resizewindowpixel; see engine comment).
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF '/size:\${_SPAN_W}x\${_SPAN_H}'"
   [ "$status" -eq 0 ] || fail "grep failed"
-  [ "$output" != "0" ] || fail "span mode missing '/size:\${_span_w}x\${_span_h}'"
+  [ "$output" != "0" ] || fail "span mode missing '/size:\${_SPAN_W}x\${_SPAN_H}'"
+}
+
+@test "engine_enables_dynamic_resolution_in_span_mode" {
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  # /size: alone only sets the INITIAL canvas — without +dynamic-resolution,
+  # dragging the floating window's edges never renegotiates the RDP
+  # resolution (xfreerdp3 /help: "+dynamic-resolution: Enable Send
+  # resolution updates when the window is resized"). Sliced to the span)
+  # case arm so this doesn't just match single mode's own +dynamic-resolution.
+  run bash -c "awk '/^    span\\)/,/^        ;;/' '$engine' | grep -cF '+dynamic-resolution'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "span mode does not enable +dynamic-resolution — window resize won't live-update the RDP canvas"
 }
 
 @test "engine_reuses_monitor_order_and_monitors_precedence_in_span_mode" {

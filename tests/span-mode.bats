@@ -6,11 +6,14 @@
 # Unlike single (one remote monitor, fullscreened) and multi (/multimon, one
 # window per FreeRDP's own layout), span computes an explicit /size:<W>x<H>
 # canvas from hyprctl monitors -j at RUNTIME (width = sum of selected
-# monitors' widths, height = MIN of their heights — handles mixed layouts
-# like two 1080p + one 1440p monitor without hardcoding a resolution), then
-# floats + moves the window to the selected monitors' origin via the Lua
-# dispatcher API (hl.dsp.window.move({ x, y, window })), and strips
-# border/blur/shadow via hl.dsp.window.set_prop for perf on modest hardware.
+# monitors' widths, height = MAX of their heights — takes the FULL resolution
+# of the tallest selected monitor, e.g. a 1440p center between two 1080p
+# monitors gets its full 1440 height; the 1080p monitors then only display
+# the top 1080 rows of that shared canvas, since they have no physical pixels
+# below that — this is a hard display-hardware limit, not a bug), then floats
+# + moves the window to the selected monitors' origin via the Lua dispatcher
+# API (hl.dsp.window.move({ x, y, window })), and strips border/blur/shadow
+# via hl.dsp.window.set_prop for perf on modest hardware.
 #
 # Monitor selection reuses the SAME precedence as multi mode (MONITOR_ORDER /
 # MONITORS / --monitor-order / --monitors) — no new profile keys.
@@ -36,10 +39,12 @@ load test_helper
   run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF '.width] | add'"
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "span canvas width not computed via jq 'add' over detected monitor widths"
-  # Height = min of selected monitors' heights (no letterboxing math needed).
-  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF '.height] | min'"
+  # Height = max of selected monitors' heights (takes the tallest monitor's
+  # full native resolution, e.g. a 1440p center monitor between two 1080p
+  # monitors keeps its full 1440 height).
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF '.height] | max'"
   [ "$status" -eq 0 ] || fail "grep failed"
-  [ "$output" != "0" ] || fail "span canvas height not computed via jq 'min' over detected monitor heights"
+  [ "$output" != "0" ] || fail "span canvas height not computed via jq 'max' over detected monitor heights"
 }
 
 @test "engine_builds_size_flag_from_span_canvas" {

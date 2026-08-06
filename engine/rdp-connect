@@ -523,13 +523,16 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         # config > first N of detected (--monitors / MONITORS) > all detected.
         #
         # Canvas math (auto-detected via hyprctl monitors -j, NOT hardcoded):
-        # width = sum of the selected monitors' widths (mismatched heights,
-        # e.g. two 1080p + one 1440p, are common — see explore notes); height
-        # = the MINIMUM of their heights, so the shared canvas never exceeds
-        # what every selected monitor can display (no letterboxing math needed
-        # downstream). Origin = the top-left corner (min x, min y) among the
-        # selected monitors, so xfreerdp3 is positioned to align with them
-        # regardless of where they sit in the global Hyprland layout.
+        # width = sum of the selected monitors' widths; height = the MAXIMUM
+        # of their heights, so a taller monitor (e.g. a 1440p center between
+        # two 1080p monitors) keeps its full native resolution instead of
+        # being cropped to the shortest one. Trade-off: on a shorter monitor,
+        # only the top <its height> rows of the shared canvas are physically
+        # visible — there is no screen below that to show the rest. That's a
+        # display-hardware limit, not a bug (see tests/span-mode.bats).
+        # Origin = the top-left corner (min x, min y) among the selected
+        # monitors, so xfreerdp3 is positioned to align with them regardless
+        # of where they sit in the global Hyprland layout.
         _EFF_MODE=span
         _order="${MONITOR_ORDER_OVERRIDE:-${MONITOR_ORDER:-}}"
         if [ -n "$_order" ]; then
@@ -545,7 +548,7 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
             '($ids | split(",") | map(tonumber)) as $sel
              | [.[] | select(.id as $i | $sel | index($i) != null)]' 2>/dev/null || true)
         _span_w=$(printf '%s' "${_span_json:-[]}" | jq '[.[].width] | add // empty' 2>/dev/null || true)
-        _span_h=$(printf '%s' "${_span_json:-[]}" | jq '[.[].height] | min // empty' 2>/dev/null || true)
+        _span_h=$(printf '%s' "${_span_json:-[]}" | jq '[.[].height] | max // empty' 2>/dev/null || true)
         _SPAN_X=$(printf '%s' "${_span_json:-[]}" | jq '[.[].x] | min // 0' 2>/dev/null || echo 0)
         _SPAN_Y=$(printf '%s' "${_span_json:-[]}" | jq '[.[].y] | min // 0' 2>/dev/null || echo 0)
         if [ -n "${_span_w:-}" ] && [ -n "${_span_h:-}" ]; then

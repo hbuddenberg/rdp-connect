@@ -541,15 +541,23 @@ compute_dpi_flags
 
 # --- MULTI-MONITOR Y REGLAS DE HYPRLAND ---
 # sort_by(.x): hyprctl's numeric monitor `id` is assigned by detection/
-# connection order, NOT physical left-to-right position — confirmed on real
-# hardware (DP-3 id=0 x=1920, DP-6 id=2 x=3840, DP-5 id=1 x=6400: id order
-# 0,1,2 is NOT spatial order 0,2,1). _MON_IDS is the DEFAULT "all detected"
-# list consumed by multi/span (MONITOR_ORDER/--monitor-order overrides this
-# explicitly and are left as-is — sorting is only for the auto-detected
-# default). Without this, /monitors:<ids> — and the multi-mode window's
-# floating-position math, which reuses the same id selection — can put
-# remote-monitor content in the wrong physical slot even though the window
-# itself lands at the right origin. See tests/monitor-config.bats.
+# connection order, NOT physical left-to-right position (confirmed on real
+# hardware: DP-3 id=0 x=1920, DP-6 id=2 x=3840, DP-5 id=1 x=6400). This
+# sorts the DEFAULT "all detected" list (MONITOR_ORDER/--monitor-order
+# overrides bypass it, unchanged) so the WINDOW POSITIONING math (multi/span,
+# which uses Hyprland's real coordinates via hyprctl) lands correctly — and
+# it does (confirmed: window origin matched the real leftmost monitor).
+#
+# KNOWN UNVERIFIED GAP (multi mode only): this sort does NOT guarantee
+# /multimon's PER-MONITOR CONTENT ends up on the right physical monitor.
+# `xfreerdp3 /list:monitor` (queries XWayland, not Hyprland) reported these
+# same 3 monitors at ITS OWN virtual x-offsets 0/1920/3840 — a totally
+# different coordinate space than hyprctl's — and since two of them share
+# the same 1920x1080 resolution, there is no way to tell from either tool's
+# output alone which /monitors:<id> maps to which physical output; it can
+# only be confirmed by watching the screen. span mode is NOT affected (it
+# sends ONE /size:<canvas> desktop, never asks FreeRDP to split content per
+# monitor id) — prefer --span over --multi-mon when this ambiguity matters.
 _MON_IDS=$(hyprctl monitors -j | jq -r 'sort_by(.x) | .[].id' | paste -sd, -)
 MON_COUNT=$(hyprctl monitors -j | jq '. | length')
 # F8: MON_FLAGS is an array, not a string. build_mon_flags (in lib) sets

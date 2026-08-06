@@ -211,8 +211,14 @@ if [ "${1:-}" == "--expand" ]; then
     _exp_json=$(hyprctl monitors -j 2>/dev/null | jq -c --arg ids "$_exp_ids" \
         '($ids | split(",") | map(tonumber)) as $sel
          | [.[] | select(.id as $i | $sel | index($i) != null)]' 2>/dev/null || true)
-    _exp_w=$(printf '%s' "${_exp_json:-[]}" | jq '[.[].width] | add // empty' 2>/dev/null || true)
-    _exp_h=$(printf '%s' "${_exp_json:-[]}" | jq '[.[].height] | max // empty' 2>/dev/null || true)
+    # width/height / .scale: hyprctl reports PHYSICAL pixel width/height, but
+    # movewindowpixel/resizewindowpixel/x/y all operate in Hyprland's LOGICAL
+    # (scale-adjusted) coordinate space — confirmed live: two 1920x1080
+    # monitors at scale 0.75 report logical width 2560 (matching a real
+    # 2560x1440 monitor at scale 1.0's x-spacing of 2560). Using raw physical
+    # width/height here would undersize the canvas on any scaled monitor.
+    _exp_w=$(printf '%s' "${_exp_json:-[]}" | jq '[.[] | (.width / .scale) | round] | add // empty' 2>/dev/null || true)
+    _exp_h=$(printf '%s' "${_exp_json:-[]}" | jq '[.[] | (.height / .scale) | round] | max // empty' 2>/dev/null || true)
     _exp_x=$(printf '%s' "${_exp_json:-[]}" | jq '[.[].x] | min // 0' 2>/dev/null || echo 0)
     _exp_y=$(printf '%s' "${_exp_json:-[]}" | jq '[.[].y] | min // 0' 2>/dev/null || echo 0)
     if [ -z "${_exp_w:-}" ] || [ -z "${_exp_h:-}" ]; then
@@ -630,8 +636,16 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
              | [.[] | select(.id as $i | $sel | index($i) != null)]' 2>/dev/null || true)
         # _SPAN_W/_SPAN_H (uppercase, like _SPAN_X/_SPAN_Y) persist to the
         # background dispatcher subshell for the resizewindowpixel call.
-        _SPAN_W=$(printf '%s' "${_span_json:-[]}" | jq '[.[].width] | add // empty' 2>/dev/null || true)
-        _SPAN_H=$(printf '%s' "${_span_json:-[]}" | jq '[.[].height] | max // empty' 2>/dev/null || true)
+        #
+        # width/height / .scale: hyprctl reports PHYSICAL pixel width/height,
+        # but movewindowpixel/resizewindowpixel/x/y all operate in Hyprland's
+        # LOGICAL (scale-adjusted) coordinate space — confirmed live: two
+        # 1920x1080 monitors at scale 0.75 report logical width 2560
+        # (matching a real 2560x1440 monitor at scale 1.0's x-spacing of
+        # 2560). Raw physical width/height would undersize the canvas on any
+        # scaled monitor.
+        _SPAN_W=$(printf '%s' "${_span_json:-[]}" | jq '[.[] | (.width / .scale) | round] | add // empty' 2>/dev/null || true)
+        _SPAN_H=$(printf '%s' "${_span_json:-[]}" | jq '[.[] | (.height / .scale) | round] | max // empty' 2>/dev/null || true)
         _SPAN_X=$(printf '%s' "${_span_json:-[]}" | jq '[.[].x] | min // 0' 2>/dev/null || echo 0)
         _SPAN_Y=$(printf '%s' "${_span_json:-[]}" | jq '[.[].y] | min // 0' 2>/dev/null || echo 0)
         if [ -n "${_SPAN_W:-}" ] && [ -n "${_SPAN_H:-}" ]; then

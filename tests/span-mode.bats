@@ -38,16 +38,22 @@ load test_helper
 @test "engine_computes_span_canvas_from_hyprctl_monitors" {
   local engine="${REPO_ROOT}/engine/rdp-connect"
   [ -f "$engine" ] || fail "engine missing at $engine"
-  # Width = sum of selected monitors' widths (auto-detected, not hardcoded).
-  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF '.width] | add'"
+  # Width = sum of selected monitors' LOGICAL widths (auto-detected, not
+  # hardcoded). hyprctl reports PHYSICAL width/height, but
+  # movewindowpixel/resizewindowpixel/x/y all operate in Hyprland's LOGICAL
+  # (scale-adjusted) space — confirmed live: two 1920x1080 monitors at scale
+  # 0.75 report logical width 2560, matching a real 2560x1440 @ scale 1.0
+  # monitor's x-spacing. "/ .scale" is the correction; without it the canvas
+  # is undersized on any scaled monitor.
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF '(.width / .scale) | round] | add'"
   [ "$status" -eq 0 ] || fail "grep failed"
-  [ "$output" != "0" ] || fail "span canvas width not computed via jq 'add' over detected monitor widths"
-  # Height = max of selected monitors' heights (takes the tallest monitor's
-  # full native resolution, e.g. a 1440p center monitor between two 1080p
-  # monitors keeps its full 1440 height).
-  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF '.height] | max'"
+  [ "$output" != "0" ] || fail "span canvas width not computed via scale-corrected jq 'add' over detected monitor widths"
+  # Height = max of selected monitors' LOGICAL heights (takes the tallest
+  # monitor's full native resolution, e.g. a 1440p center monitor between two
+  # 1080p monitors keeps its full 1440 height).
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF '(.height / .scale) | round] | max'"
   [ "$status" -eq 0 ] || fail "grep failed"
-  [ "$output" != "0" ] || fail "span canvas height not computed via jq 'max' over detected monitor heights"
+  [ "$output" != "0" ] || fail "span canvas height not computed via scale-corrected jq 'max' over detected monitor heights"
 }
 
 @test "engine_builds_size_flag_from_span_canvas" {

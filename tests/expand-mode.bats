@@ -54,10 +54,12 @@ load test_helper
 @test "engine_expand_reuses_span_canvas_math" {
   local engine="${REPO_ROOT}/engine/rdp-connect"
   [ -f "$engine" ] || fail "engine missing at $engine"
-  run bash -c "awk '/--expand/,0' '$engine' | grep -cF '.width] | add'"
+  # Same scale-corrected (logical, not physical pixel) math as span mode —
+  # see tests/span-mode.bats::engine_computes_span_canvas_from_hyprctl_monitors.
+  run bash -c "awk '/--expand/,0' '$engine' | grep -cF '(.width / .scale) | round] | add'"
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "--expand does not compute canvas width the same way span mode does"
-  run bash -c "awk '/--expand/,0' '$engine' | grep -cF '.height] | max'"
+  run bash -c "awk '/--expand/,0' '$engine' | grep -cF '(.height / .scale) | round] | max'"
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "--expand does not compute canvas height the same way span mode does"
 }

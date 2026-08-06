@@ -114,3 +114,19 @@ load test_helper
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "MONITORS not consulted in CODE"
 }
+
+@test "engine_sorts_default_monitor_ids_by_physical_x_position" {
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  # hyprctl's numeric monitor `id` is assigned by detection/connection order,
+  # NOT physical left-to-right position (confirmed on real hardware: DP-3
+  # id=0 x=1920, DP-6 id=2 x=3840, DP-5 id=1 x=6400 — id order 0,1,2 is NOT
+  # spatial order 0,2,1). The DEFAULT "all detected" monitor-id list (used by
+  # multi/span/expand when no explicit MONITOR_ORDER/--monitor-order is
+  # given) must sort by x before joining ids, or /monitors:<ids> and the
+  # multi-mode window's remote-monitor content land in the wrong physical
+  # slots even though the WINDOW itself is positioned correctly.
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'sort_by(.x)'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "default monitor-id list is not sorted by x (sort_by(.x) missing)"
+}

@@ -61,6 +61,17 @@ load test_helper
   [ "$output" != "0" ] || fail "--expand does not compute canvas height the same way span mode does"
 }
 
+@test "engine_expand_sorts_default_monitor_ids_by_physical_x_position" {
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  # --expand computes its own default monitor-id list inline (it short-
+  # circuits before the launch-path's _MON_IDS is built) — must sort by x
+  # too, same bug/fix as tests/monitor-config.bats's equivalent test.
+  run bash -c "awk '/--expand/,0' '$engine' | grep -cF 'sort_by(.x)'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "--expand's default monitor-id list is not sorted by x"
+}
+
 @test "engine_expand_exits_without_launching_xfreerdp" {
   local engine="${REPO_ROOT}/engine/rdp-connect"
   [ -f "$engine" ] || fail "engine missing at $engine"

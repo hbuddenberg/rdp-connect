@@ -196,7 +196,12 @@ if [ "${1:-}" == "--expand" ]; then
         exit 1
     fi
 
-    _exp_ids=$(hyprctl monitors -j | jq -r '.[].id' | paste -sd, -)
+    # sort_by(.x): hyprctl's numeric monitor `id` is assigned by detection/
+    # connection order, NOT physical left-to-right position (confirmed on
+    # real hardware — see tests/monitor-config.bats). Without this, the
+    # default "all detected" id list can put remote-monitor content in the
+    # wrong physical slot even though the window itself lands correctly.
+    _exp_ids=$(hyprctl monitors -j | jq -r 'sort_by(.x) | .[].id' | paste -sd, -)
     if [ -n "${MONITOR_ORDER_OVERRIDE:-}" ]; then
         _exp_ids="$MONITOR_ORDER_OVERRIDE"
     elif [ -n "${MONITORS_OVERRIDE:-}" ]; then
@@ -535,7 +540,17 @@ log_event "INFO" "Puerto 3389 en $HOST respondiendo correctamente."
 compute_dpi_flags
 
 # --- MULTI-MONITOR Y REGLAS DE HYPRLAND ---
-_MON_IDS=$(hyprctl monitors -j | jq -r '.[].id' | paste -sd, -)
+# sort_by(.x): hyprctl's numeric monitor `id` is assigned by detection/
+# connection order, NOT physical left-to-right position — confirmed on real
+# hardware (DP-3 id=0 x=1920, DP-6 id=2 x=3840, DP-5 id=1 x=6400: id order
+# 0,1,2 is NOT spatial order 0,2,1). _MON_IDS is the DEFAULT "all detected"
+# list consumed by multi/span (MONITOR_ORDER/--monitor-order overrides this
+# explicitly and are left as-is — sorting is only for the auto-detected
+# default). Without this, /monitors:<ids> — and the multi-mode window's
+# floating-position math, which reuses the same id selection — can put
+# remote-monitor content in the wrong physical slot even though the window
+# itself lands at the right origin. See tests/monitor-config.bats.
+_MON_IDS=$(hyprctl monitors -j | jq -r 'sort_by(.x) | .[].id' | paste -sd, -)
 MON_COUNT=$(hyprctl monitors -j | jq '. | length')
 # F8: MON_FLAGS is an array, not a string. build_mon_flags (in lib) sets
 # MON_FLAGS=("/multimon" "/monitors:<ids>") or ("/f"). Expanded at the

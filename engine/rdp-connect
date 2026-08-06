@@ -625,6 +625,7 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
             # sdl-freerdp3 has its OWN monitor ID scheme (not hyprctl). Don't
             # pass /monitors: — let SDL auto-detect all monitors. Just /multimon.
             MON_FLAGS=("/multimon")
+            _MULTI_IDS="$_MON_IDS"
             log_event "INFO" "Modo multi-monitor (SDL): /multimon (auto-detect)."
         else
         # Build /monitors list. Precedence: --monitor-order flag > MONITOR_ORDER
@@ -634,17 +635,34 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         _order="${MONITOR_ORDER_OVERRIDE:-${MONITOR_ORDER:-}}"
         if [ -n "$_order" ]; then
             MON_FLAGS=("/multimon" "/monitors:$_order")
+            _MULTI_IDS="$_order"
         elif [ -n "${MONITORS_OVERRIDE:-${MONITORS:-}}" ]; then
             _mn="${MONITORS_OVERRIDE:-${MONITORS:-}}"
             _first=$(printf '%s\n' "$_MON_IDS" | tr ',' '\n' | head -n "$_mn" | paste -sd, -)
             MON_FLAGS=("/multimon" "/monitors:$_first")
+            _MULTI_IDS="$_first"
             unset _first _mn
         else
             build_mon_flags "$MON_COUNT" "$_MON_IDS"
+            _MULTI_IDS="$_MON_IDS"
         fi
         log_event "INFO" "Modo multi-monitor: ${MON_FLAGS[*]}."
         unset _order
         fi
+        # Position the /multimon window at its monitors' origin (min x, min
+        # y) — without this, Hyprland tiles it wherever its default layout
+        # puts it (the "cramped" window this project's README already warns
+        # about), since to the compositor it's just a regular XWayland window
+        # that happens to be big, not something that's supposed to span 3
+        # specific physical outputs. FreeRDP negotiates the window's SIZE
+        # itself from /monitors:<ids>, so only the origin is computed here —
+        # no forced resize (unlike --expand's riskier absolute-resize call).
+        _multi_json=$(hyprctl monitors -j 2>/dev/null | jq -c --arg ids "$_MULTI_IDS" \
+            '($ids | split(",") | map(tonumber)) as $sel
+             | [.[] | select(.id as $i | $sel | index($i) != null)]' 2>/dev/null || true)
+        _MULTI_X=$(printf '%s' "${_multi_json:-[]}" | jq '[.[].x] | min // 0' 2>/dev/null || echo 0)
+        _MULTI_Y=$(printf '%s' "${_multi_json:-[]}" | jq '[.[].y] | min // 0' 2>/dev/null || echo 0)
+        unset _multi_json
         ;;
 esac
 
@@ -750,6 +768,17 @@ esac
         hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"noblur\", value = \"true\", window = \"class:$WM_CLASS\" })" &>/dev/null || true
         hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"noshadow\", value = \"true\", window = \"class:$WM_CLASS\" })" &>/dev/null || true
         log_event "INFO" "Ventana $WM_CLASS spanning: floating en (${_SPAN_X:-0},${_SPAN_Y:-0}), sin borde/blur/sombra." 2>/dev/null || true
+    elif [ "${_EFF_MODE:-multi}" = "multi" ]; then
+        # /multimon already negotiates the correct WINDOW SIZE from the
+        # /monitors:<ids> it was given — no resize dispatch needed here, just
+        # float it (so it's not confined to Hyprland's tiling layout) and
+        # move it to the selected monitors' origin so it actually lands ON
+        # those physical outputs, instead of wherever the tiling layout put
+        # it (the "cramped" window this project's README documents).
+        hyprctl dispatch "hl.dsp.window.float({ action = \"enable\", window = \"class:$WM_CLASS\" })" &>/dev/null || true
+        hyprctl dispatch "hl.dsp.window.move({ x = ${_MULTI_X:-0}, y = ${_MULTI_Y:-0}, window = \"class:$WM_CLASS\" })" &>/dev/null || true
+        hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"noborder\", value = \"true\", window = \"class:$WM_CLASS\" })" &>/dev/null || true
+        log_event "INFO" "Ventana $WM_CLASS multi-monitor: floating y posicionada en (${_MULTI_X:-0},${_MULTI_Y:-0})." 2>/dev/null || true
     fi
 ) &
 

@@ -11,9 +11,12 @@
 # monitors gets its full 1440 height; the 1080p monitors then only display
 # the top 1080 rows of that shared canvas, since they have no physical pixels
 # below that — this is a hard display-hardware limit, not a bug), then floats
-# + moves the window to the selected monitors' origin via the Lua dispatcher
-# API (hl.dsp.window.move({ x, y, window })), and strips border/blur/shadow
-# via hl.dsp.window.set_prop for perf on modest hardware.
+# + resizes + moves the window to the selected monitors' origin via the
+# CLASSIC hyprctl dispatch forms (setfloating / resizewindowpixel exact /
+# movewindowpixel exact — see tests/hyprland-api.bats for why classic, not
+# Lua hl.dsp.*, is correct here). noborder/noblur/noshadow were dropped:
+# `hyprctl setprop` returned "unknown request" for every property name tried
+# live on the target Hyprland build.
 #
 # Monitor selection reuses the SAME precedence as multi mode (MONITOR_ORDER /
 # MONITORS / --monitor-order / --monitors) — no new profile keys.

@@ -8,9 +8,11 @@
 # span 3 specific physical outputs, so its default tiling policy places it
 # wherever, producing the documented "cramped" window. FreeRDP already
 # negotiates the WINDOW SIZE itself from the /monitors:<ids> it's given (no
-# forced resize needed — unlike --expand's absolute-resize call), so the fix
-# is only to float it and move it to the selected monitors' origin, same
-# hl.dsp.window.move({x,y}) coord-move used for span/--expand.
+# forced resize needed — unlike --expand's exact resize call), so the fix is
+# only to float it and move it to the selected monitors' origin, via the
+# classic `movewindowpixel exact <x> <y>,class:...` dispatcher (also used by
+# span/--expand — see tests/hyprland-api.bats for why the CLASSIC dispatch
+# form is correct here, not Lua hl.dsp.*).
 #
 # Coverage:
 #   - Structural (engine): multi case computes an origin (min x, min y) via
@@ -38,10 +40,10 @@ load test_helper
   [ -f "$engine" ] || fail "engine missing at $engine"
   # Sliced from the background dispatcher's multi branch to its own fi/elif
   # boundary, so this is specifically the multi-mode dispatch, not span's.
-  run bash -c "awk '/_EFF_MODE:-multi\\}\" = \"multi\"/,/^    fi\$/' '$engine' | grep -cF 'hl.dsp.window.float'"
+  run bash -c "awk '/_EFF_MODE:-multi\\}\" = \"multi\"/,/^    fi\$/' '$engine' | grep -cF 'dispatch setfloating'"
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "multi mode does not float the window"
-  run bash -c "awk '/_EFF_MODE:-multi\\}\" = \"multi\"/,/^    fi\$/' '$engine' | grep -cF 'hl.dsp.window.move({ x ='"
+  run bash -c "awk '/_EFF_MODE:-multi\\}\" = \"multi\"/,/^    fi\$/' '$engine' | grep -cF 'dispatch movewindowpixel'"
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "multi mode does not move the window to its monitors' origin"
 }
@@ -50,8 +52,8 @@ load test_helper
   local engine="${REPO_ROOT}/engine/rdp-connect"
   [ -f "$engine" ] || fail "engine missing at $engine"
   # FreeRDP negotiates /multimon's window size itself from /monitors:<ids> —
-  # forcing hl.dsp.window.resize here would fight that negotiation.
-  run bash -c "awk '/_EFF_MODE:-multi\\}\" = \"multi\"/,/^    fi\$/' '$engine' | grep -cF 'hl.dsp.window.resize'"
+  # forcing a resizewindowpixel dispatch here would fight that negotiation.
+  run bash -c "awk '/_EFF_MODE:-multi\\}\" = \"multi\"/,/^    fi\$/' '$engine' | grep -cF 'dispatch resizewindowpixel'"
   [ "$status" -eq 0 ] || fail "grep failed"
   assert_output "0"
 }

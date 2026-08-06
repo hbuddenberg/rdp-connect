@@ -1,12 +1,12 @@
 #!/usr/bin/env bats
 # tests/expand-mode.bats — covers `rdp-connect --expand <profile>`.
 #
-# Applies the span layout (float + absolute resize + move + noborder/noblur/
-# noshadow) to an ALREADY RUNNING session's window, live, WITHOUT launching a
-# new xfreerdp3 process or touching credentials. Meant to be bound to a
-# Hyprland keybind so a single-mode session (which always has
-# +dynamic-resolution — see tests/monitor-mode.bats) can be "expanded" across
-# N monitors on demand, instead of only via `--span` at launch time.
+# Applies the span layout (float + exact resize + exact move) to an ALREADY
+# RUNNING session's window, live, WITHOUT launching a new xfreerdp3 process
+# or touching credentials. Meant to be bound to a Hyprland keybind so a
+# single-mode session (which always has +dynamic-resolution — see
+# tests/monitor-mode.bats) can be "expanded" across N monitors on demand,
+# instead of only via `--span` at launch time.
 #
 # Canvas math and monitor-selection reuse the exact same approach as span
 # mode (tests/span-mode.bats): width = sum of selected monitors' widths,
@@ -14,10 +14,11 @@
 # is via --monitors/--monitor-order flags only (no profile-config re-read —
 # --expand is a live action against an existing window, not a launch).
 #
-# hl.dsp.window.resize's absolute-size parameters (relative=false) are the
-# least-confirmed dispatcher signature in this codebase (see engine comment)
-# — real compositor execution stays manual-verify, same as every other
-# hl.dsp.* call here.
+# Uses the CLASSIC hyprctl dispatch forms (movewindowpixel/resizewindowpixel/
+# setfloating), confirmed live against a running window on Hyprland 0.56.1 —
+# see tests/hyprland-api.bats for how/why (the Lua hl.dsp.* API this codebase
+# used originally does not work without the optional Lua config manager,
+# which is not active on the target environment).
 
 load test_helper
 
@@ -39,15 +40,15 @@ load test_helper
   [ "$output" != "0" ] || fail "--expand does not verify the target window exists first"
 }
 
-@test "engine_expand_uses_absolute_resize_dispatcher" {
+@test "engine_expand_uses_classic_exact_resize_dispatcher" {
   local engine="${REPO_ROOT}/engine/rdp-connect"
   [ -f "$engine" ] || fail "engine missing at $engine"
-  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'hl.dsp.window.resize'"
+  run bash -c "awk '/--expand/,0' '$engine' | grep -cF 'dispatch resizewindowpixel'"
   [ "$status" -eq 0 ] || fail "grep failed"
-  [ "$output" != "0" ] || fail "hl.dsp.window.resize dispatcher missing (--expand live resize)"
-  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'relative = false'"
+  [ "$output" != "0" ] || fail "classic resizewindowpixel dispatcher missing (--expand live resize)"
+  run bash -c "awk '/--expand/,0' '$engine' | grep -cF 'exact'"
   [ "$status" -eq 0 ] || fail "grep failed"
-  [ "$output" != "0" ] || fail "resize call missing relative = false (must be absolute, not a delta)"
+  [ "$output" != "0" ] || fail "resize call missing 'exact' (must be absolute, not a delta move)"
 }
 
 @test "engine_expand_reuses_span_canvas_math" {

@@ -182,10 +182,11 @@ fi
 # against a running window, not a profile launch, so profile config is not
 # re-read; pass the flags explicitly if you want a monitor subset.
 #
-# hl.dsp.window.resize's absolute-size form (relative = false) is the
-# LEAST-confirmed dispatcher signature in this engine (no first-party example
-# found) — like every hl.dsp.* call here, real compositor execution is
-# manual-verify; `|| true` keeps a bad guess from ever breaking the session.
+# CLASSIC hyprctl dispatch syntax (movewindowpixel/resizewindowpixel/
+# setfloating) — NOT the Lua hl.dsp.* API, which only works when Hyprland's
+# optional Lua config manager is active. Verified live against a running
+# rdp-* window on Hyprland 0.56.1 with classic config; `|| true` still guards
+# every call in case a future Hyprland version changes this again.
 if [ "${1:-}" == "--expand" ]; then
     EXPAND_PROFILE="${2:-}"
     [ -z "$EXPAND_PROFILE" ] && { echo "Uso: rdp-connect --expand <perfil>" >&2; exit 1; }
@@ -219,12 +220,11 @@ if [ "${1:-}" == "--expand" ]; then
         exit 1
     fi
 
-    hyprctl dispatch "hl.dsp.window.float({ action = \"enable\", window = \"class:$EXPAND_CLASS\" })" &>/dev/null || true
-    hyprctl dispatch "hl.dsp.window.resize({ x = ${_exp_w}, y = ${_exp_h}, relative = false, window = \"class:$EXPAND_CLASS\" })" &>/dev/null || true
-    hyprctl dispatch "hl.dsp.window.move({ x = ${_exp_x}, y = ${_exp_y}, window = \"class:$EXPAND_CLASS\" })" &>/dev/null || true
-    hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"noborder\", value = \"true\", window = \"class:$EXPAND_CLASS\" })" &>/dev/null || true
-    hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"noblur\", value = \"true\", window = \"class:$EXPAND_CLASS\" })" &>/dev/null || true
-    hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"noshadow\", value = \"true\", window = \"class:$EXPAND_CLASS\" })" &>/dev/null || true
+    # ORDER MATTERS: resizewindowpixel resets the window's absolute position
+    # as a side effect (confirmed live) — movewindowpixel MUST run last.
+    hyprctl dispatch setfloating "class:$EXPAND_CLASS" &>/dev/null || true
+    hyprctl dispatch resizewindowpixel "exact ${_exp_w} ${_exp_h},class:$EXPAND_CLASS" &>/dev/null || true
+    hyprctl dispatch movewindowpixel "exact ${_exp_x} ${_exp_y},class:$EXPAND_CLASS" &>/dev/null || true
     echo "rdp-connect --expand: '$EXPAND_PROFILE' -> ${_exp_w}x${_exp_h} en (${_exp_x},${_exp_y})."
     unset _exp_ids _exp_json _exp_w _exp_h _exp_x _exp_y
     exit 0
@@ -586,8 +586,8 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         # Always dynamic + floating: the remote desktop resolution follows the
         # client window size live (FreeRDP +dynamic-resolution, needs Win8.1+
         # server — the laptop Win11 supports it). No /size, no +f — fullscreen
-        # on launch comes from the Hyprland hl.dsp.window.fullscreen dispatcher
-        # below (WM-level), and the window is set floating (hl.dsp.window.float)
+        # on launch comes from the classic `fullscreen` hyprctl dispatcher
+        # below (WM-level), and the window is set floating (`setfloating`)
         # so leaving fullscreen always gives a freely draggable/resizable
         # window, cross-monitor, whose RDP resolution tracks the resize live.
         # DYNAMIC_RESOLUTION_OVERRIDE/MONITOR_ID/MONITOR_<id> are kept accepted
@@ -628,19 +628,21 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         _span_json=$(hyprctl monitors -j 2>/dev/null | jq -c --arg ids "$_span_ids" \
             '($ids | split(",") | map(tonumber)) as $sel
              | [.[] | select(.id as $i | $sel | index($i) != null)]' 2>/dev/null || true)
-        _span_w=$(printf '%s' "${_span_json:-[]}" | jq '[.[].width] | add // empty' 2>/dev/null || true)
-        _span_h=$(printf '%s' "${_span_json:-[]}" | jq '[.[].height] | max // empty' 2>/dev/null || true)
+        # _SPAN_W/_SPAN_H (uppercase, like _SPAN_X/_SPAN_Y) persist to the
+        # background dispatcher subshell for the resizewindowpixel call.
+        _SPAN_W=$(printf '%s' "${_span_json:-[]}" | jq '[.[].width] | add // empty' 2>/dev/null || true)
+        _SPAN_H=$(printf '%s' "${_span_json:-[]}" | jq '[.[].height] | max // empty' 2>/dev/null || true)
         _SPAN_X=$(printf '%s' "${_span_json:-[]}" | jq '[.[].x] | min // 0' 2>/dev/null || echo 0)
         _SPAN_Y=$(printf '%s' "${_span_json:-[]}" | jq '[.[].y] | min // 0' 2>/dev/null || echo 0)
-        if [ -n "${_span_w:-}" ] && [ -n "${_span_h:-}" ]; then
-            MON_FLAGS=("/size:${_span_w}x${_span_h}")
-            log_event "INFO" "Modo span: monitores [$_span_ids] -> canvas ${_span_w}x${_span_h} en (${_SPAN_X},${_SPAN_Y})."
+        if [ -n "${_SPAN_W:-}" ] && [ -n "${_SPAN_H:-}" ]; then
+            MON_FLAGS=("/size:${_SPAN_W}x${_SPAN_H}")
+            log_event "INFO" "Modo span: monitores [$_span_ids] -> canvas ${_SPAN_W}x${_SPAN_H} en (${_SPAN_X},${_SPAN_Y})."
         else
             log_event "WARN" "Modo span: no se pudo calcular el canvas (hyprctl/jq). Fallback a multi-monitor."
             build_mon_flags "$MON_COUNT" "$_MON_IDS"
             _EFF_MODE=multi
         fi
-        unset _order _span_ids _span_json _span_w _span_h
+        unset _order _span_ids _span_json
         ;;
     multi|*)
         _EFF_MODE=multi
@@ -743,13 +745,16 @@ case "$_eff_client" in
         ;;
 esac
 
-# --- BACKGROUND WINDOW MANAGEMENT (Hyprland 0.55+ Lua dispatcher API) ---
-# The new API is action-based (the window must already exist), but xfreerdp3
-# hasn't created it yet. Spawn a background subshell that polls for the window
-# by class, then: moves it to PREFERRED_WS, focuses it, and (single mode)
-# fullscreens it. Runs concurrently with the xfreerdp3 pipeline below.
-# `hyprctl dispatch '<lua>'` executes the dispatcher; `class:$WM_CLASS` is the
-# selector. See tests/hyprland-api.bats + wiki/Using-hyprctl.
+# --- BACKGROUND WINDOW MANAGEMENT (classic hyprctl dispatch) ---
+# Action-based (the window must already exist), but xfreerdp3 hasn't created
+# it yet. Spawn a background subshell that polls for the window by class,
+# then: moves it to PREFERRED_WS, focuses it, and applies the mode-specific
+# geometry. Runs concurrently with the xfreerdp3 pipeline below.
+# `hyprctl dispatch <dispatcher> <args>` — classic hyprlang form; `class:
+# $WM_CLASS` is the window selector accepted by that arg string. NOT `hl.dsp.*`
+# Lua (requires the optional Lua config manager, not in use here — see the
+# comment right before the subshell for how this was confirmed live).
+# See tests/hyprland-api.bats + wiki/Using-hyprctl.
 (
     # Close the lock fd so this background subshell does NOT independently hold
     # the flock — only the main engine process holds it. Otherwise the lock
@@ -764,33 +769,44 @@ esac
         sleep 0.2
         _tries=$((_tries+1))
     done
+    # CLASSIC hyprctl dispatch syntax (NOT the Lua hl.dsp.* API — that only
+    # works when Hyprland's optional Lua config manager is active; `hyprctl
+    # eval` errors "eval is only supported with the lua config manager" on a
+    # classic-hyprlang setup, and `hyprctl dispatch "hl.dsp...."` errors
+    # "Invalid dispatcher". Every command below was verified live against a
+    # running rdp-* window on Hyprland 0.56.1 with classic config — see
+    # tests/hyprland-api.bats for the exact confirmed forms.
+    #
+    # ORDER MATTERS: resizewindowpixel and movetoworkspacesilent both reset
+    # the window's absolute position as a side effect (confirmed live), so
+    # the final movewindowpixel (exact placement) must always run LAST.
     if [ -n "${PREFERRED_WS:-}" ]; then
-        hyprctl dispatch "hl.dsp.window.move({ workspace = \"$PREFERRED_WS\", window = \"class:$WM_CLASS\" })" &>/dev/null || true
+        hyprctl dispatch movetoworkspacesilent "$PREFERRED_WS,class:$WM_CLASS" &>/dev/null || true
         log_event "INFO" "Ventana $WM_CLASS movida al Workspace $PREFERRED_WS." 2>/dev/null || true
     fi
-    hyprctl dispatch "hl.dsp.focus({ window = \"class:$WM_CLASS\" })" &>/dev/null || true
+    hyprctl dispatch focuswindow "class:$WM_CLASS" &>/dev/null || true
     if [ "${_EFF_MODE:-multi}" = "single" ]; then
         # Float BEFORE fullscreen: fullscreen works on tiled windows too, but
         # only a floating window keeps a free-form geometry to fall back to
         # when the user later un-fullscreens (Hyprland fullscreen keybind) —
         # that's what makes the window draggable/resizable across monitors.
-        hyprctl dispatch "hl.dsp.window.float({ action = \"enable\", window = \"class:$WM_CLASS\" })" &>/dev/null || true
+        # `fullscreen` (classic dispatcher) has no window-selector arg — it
+        # acts on the currently focused window, which is why focuswindow runs
+        # first (shared above). Mode "0" = true edge-to-edge fullscreen
+        # (confirmed live); "1" is maximize-with-gaps, NOT what we want.
+        hyprctl dispatch setfloating "class:$WM_CLASS" &>/dev/null || true
         log_event "INFO" "Ventana $WM_CLASS floating (drag/resize entre monitores)." 2>/dev/null || true
-        hyprctl dispatch "hl.dsp.window.fullscreen({ mode = \"fullscreen\", action = \"set\", window = \"class:$WM_CLASS\" })" &>/dev/null || true
+        hyprctl dispatch fullscreen "0" &>/dev/null || true
         log_event "INFO" "Ventana $WM_CLASS fullscreen (single-mon)." 2>/dev/null || true
     elif [ "${_EFF_MODE:-multi}" = "span" ]; then
-        # Position the /size:-matched window at the spanned monitors' origin,
-        # floating (so it can still be dragged), and drop border/blur/shadow —
-        # this window covers a multi-monitor canvas and any compositor effect
-        # on it is wasted GPU work on modest hardware (see explore notes on
-        # i3 6th-gen + 8GB perf). Other windows are untouched (set_prop is
-        # scoped to class:$WM_CLASS, unique per profile).
-        hyprctl dispatch "hl.dsp.window.float({ action = \"enable\", window = \"class:$WM_CLASS\" })" &>/dev/null || true
-        hyprctl dispatch "hl.dsp.window.move({ x = ${_SPAN_X:-0}, y = ${_SPAN_Y:-0}, window = \"class:$WM_CLASS\" })" &>/dev/null || true
-        hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"noborder\", value = \"true\", window = \"class:$WM_CLASS\" })" &>/dev/null || true
-        hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"noblur\", value = \"true\", window = \"class:$WM_CLASS\" })" &>/dev/null || true
-        hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"noshadow\", value = \"true\", window = \"class:$WM_CLASS\" })" &>/dev/null || true
-        log_event "INFO" "Ventana $WM_CLASS spanning: floating en (${_SPAN_X:-0},${_SPAN_Y:-0}), sin borde/blur/sombra." 2>/dev/null || true
+        # Position the /size:-matched window at the spanned monitors' origin.
+        # noborder/noblur/noshadow (perf on modest hardware) are NOT applied
+        # — `hyprctl setprop` returned "unknown request" for every property
+        # name tried against this build; dropped rather than ship dead calls.
+        hyprctl dispatch setfloating "class:$WM_CLASS" &>/dev/null || true
+        hyprctl dispatch resizewindowpixel "exact ${_SPAN_W:-0} ${_SPAN_H:-0},class:$WM_CLASS" &>/dev/null || true
+        hyprctl dispatch movewindowpixel "exact ${_SPAN_X:-0} ${_SPAN_Y:-0},class:$WM_CLASS" &>/dev/null || true
+        log_event "INFO" "Ventana $WM_CLASS spanning: floating en (${_SPAN_X:-0},${_SPAN_Y:-0}) tamaño ${_SPAN_W:-0}x${_SPAN_H:-0}." 2>/dev/null || true
     elif [ "${_EFF_MODE:-multi}" = "multi" ]; then
         # /multimon already negotiates the correct WINDOW SIZE from the
         # /monitors:<ids> it was given — no resize dispatch needed here, just
@@ -798,9 +814,8 @@ esac
         # move it to the selected monitors' origin so it actually lands ON
         # those physical outputs, instead of wherever the tiling layout put
         # it (the "cramped" window this project's README documents).
-        hyprctl dispatch "hl.dsp.window.float({ action = \"enable\", window = \"class:$WM_CLASS\" })" &>/dev/null || true
-        hyprctl dispatch "hl.dsp.window.move({ x = ${_MULTI_X:-0}, y = ${_MULTI_Y:-0}, window = \"class:$WM_CLASS\" })" &>/dev/null || true
-        hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"noborder\", value = \"true\", window = \"class:$WM_CLASS\" })" &>/dev/null || true
+        hyprctl dispatch setfloating "class:$WM_CLASS" &>/dev/null || true
+        hyprctl dispatch movewindowpixel "exact ${_MULTI_X:-0} ${_MULTI_Y:-0},class:$WM_CLASS" &>/dev/null || true
         log_event "INFO" "Ventana $WM_CLASS multi-monitor: floating y posicionada en (${_MULTI_X:-0},${_MULTI_Y:-0})." 2>/dev/null || true
     fi
 ) &

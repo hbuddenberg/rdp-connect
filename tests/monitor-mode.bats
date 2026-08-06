@@ -13,10 +13,11 @@
 #
 # Single mode always applies "+dynamic-resolution" (windowed, resizable RDP
 # session — no more fixed /size+f) and the window is set floating +
-# auto-fullscreened via Hyprland's hl.dsp.window.float / .fullscreen
-# dispatchers (WM-level, not an xfreerdp3 flag — see hyprland-api.bats). This
-# means un-fullscreening (or dragging) the floating window always leaves a
-# freely resizable session whose RDP resolution follows the window live.
+# auto-fullscreened via the classic `setfloating` / `fullscreen "0"` hyprctl
+# dispatchers (WM-level, not an xfreerdp3 flag — see hyprland-api.bats for
+# why classic dispatch, not Lua hl.dsp.*, is correct here). This means
+# un-fullscreening (or dragging) the floating window always leaves a freely
+# resizable session whose RDP resolution follows the window live.
 # Multi mode delegates to build_mon_flags (/multimon /monitors:<all>) —
 # unchanged default behavior.
 #
@@ -86,7 +87,7 @@ load test_helper
   local engine="${REPO_ROOT}/engine/rdp-connect"
   [ -f "$engine" ] || fail "engine missing at $engine"
   # Single mode: always +dynamic-resolution (windowed, resizable) — fullscreen
-  # on launch comes from the Hyprland hl.dsp.window.fullscreen dispatcher, not
+  # on launch comes from the classic `fullscreen "0"` hyprctl dispatcher, not
   # an xfreerdp3 /size+f flag, so leaving fullscreen always yields a live-
   # resizable session.
   run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF '+dynamic-resolution'"

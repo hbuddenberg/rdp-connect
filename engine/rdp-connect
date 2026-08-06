@@ -86,9 +86,10 @@ ${C_BOLD}Usage:${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--single-mon${C_R} ${C_KEY}<profile>${C_R}         ${C_DIM}Single-monitor (DEFAULT): floating, fullscreen on launch, always resizable${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--multi-mon${C_R} ${C_KEY}<profile>${C_R}          ${C_DIM}Multi-monitor (all monitors; cramped under Hyprland)${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--span${C_R} ${C_KEY}<profile>${C_R}               ${C_DIM}Unify monitors into ONE floating window (canvas auto-detected)${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--expand${C_R} ${C_KEY}<profile>${C_R}             ${C_DIM}Apply the span layout to an ALREADY RUNNING session (bind to a key)${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--dynamic-resolution${C_R} ${C_KEY}<profile>${C_R} ${C_DIM}No-op (single mode is always dynamic-resolution now)${C_R}
-  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--monitors${C_R} ${C_KEY}<n>${C_R} ${C_KEY}<profile>${C_R}     ${C_DIM}Multi/span: use first <n> detected monitors${C_R}
-  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--monitor-order${C_R} ${C_KEY}<ids>${C_R} ${C_KEY}<profile>${C_R}  ${C_DIM}Multi/span: use these monitor IDs in order${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--monitors${C_R} ${C_KEY}<n>${C_R} ${C_KEY}<profile>${C_R}     ${C_DIM}Multi/span/expand: use first <n> detected monitors${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--monitor-order${C_R} ${C_KEY}<ids>${C_R} ${C_KEY}<profile>${C_R}  ${C_DIM}Multi/span/expand: use these monitor IDs in order${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--client${C_R} ${C_KEY}<x11|sdl|wayland>${C_R} ${C_KEY}<profile>${C_R}  ${C_DIM}Choose the FreeRDP client binary${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--help${C_R} | ${C_FLAG}-h${C_R}                  ${C_DIM}Show this help message${C_R}
 
@@ -164,6 +165,63 @@ if [ "${1:-}" == "--log" ] || [ "${1:-}" == "-l" ]; then
     [ ! -f "$TARGET_LOG" ] && { printf "$MSG_LOG_NO_FILE\n" "$LOG_PROFILE"; exit 1; }
     echo "=== Viendo log en vivo de '$LOG_PROFILE' ($TARGET_LOG) ==="
     tail -n 30 -f "$TARGET_LOG"
+    exit 0
+fi
+
+# --- MODO EXPANDIR: rdp-connect --expand <perfil> [--monitors N | --monitor-order ids] ---
+# Applies the span layout (float + ABSOLUTE resize + move + noborder/noblur/
+# noshadow) to an ALREADY RUNNING session's window, live — no new xfreerdp3
+# process, no credentials touched. Meant for a Hyprland keybind: a single-mode
+# session always has +dynamic-resolution active (see the MONITOR MODE block
+# below), so resizing its window renegotiates the RDP canvas live. Multi-mode
+# sessions do NOT have dynamic-resolution — expanding one will move/resize the
+# window but the RDP content itself won't rescale to fill it.
+#
+# --monitors/--monitor-order here are the CLI flags ONLY (already parsed into
+# MONITORS_OVERRIDE/MONITOR_ORDER_OVERRIDE above) — this is a live action
+# against a running window, not a profile launch, so profile config is not
+# re-read; pass the flags explicitly if you want a monitor subset.
+#
+# hl.dsp.window.resize's absolute-size form (relative = false) is the
+# LEAST-confirmed dispatcher signature in this engine (no first-party example
+# found) — like every hl.dsp.* call here, real compositor execution is
+# manual-verify; `|| true` keeps a bad guess from ever breaking the session.
+if [ "${1:-}" == "--expand" ]; then
+    EXPAND_PROFILE="${2:-}"
+    [ -z "$EXPAND_PROFILE" ] && { echo "Uso: rdp-connect --expand <perfil>" >&2; exit 1; }
+    EXPAND_CLASS="rdp-${EXPAND_PROFILE}"
+
+    if ! hyprctl clients -j 2>/dev/null | jq -e --arg c "$EXPAND_CLASS" 'any(.[]; .class==$c)' >/dev/null 2>&1; then
+        echo "rdp-connect --expand: no hay sesión activa para '$EXPAND_PROFILE' (class=$EXPAND_CLASS)." >&2
+        exit 1
+    fi
+
+    _exp_ids=$(hyprctl monitors -j | jq -r '.[].id' | paste -sd, -)
+    if [ -n "${MONITOR_ORDER_OVERRIDE:-}" ]; then
+        _exp_ids="$MONITOR_ORDER_OVERRIDE"
+    elif [ -n "${MONITORS_OVERRIDE:-}" ]; then
+        _exp_ids=$(printf '%s\n' "$_exp_ids" | tr ',' '\n' | head -n "$MONITORS_OVERRIDE" | paste -sd, -)
+    fi
+    _exp_json=$(hyprctl monitors -j 2>/dev/null | jq -c --arg ids "$_exp_ids" \
+        '($ids | split(",") | map(tonumber)) as $sel
+         | [.[] | select(.id as $i | $sel | index($i) != null)]' 2>/dev/null || true)
+    _exp_w=$(printf '%s' "${_exp_json:-[]}" | jq '[.[].width] | add // empty' 2>/dev/null || true)
+    _exp_h=$(printf '%s' "${_exp_json:-[]}" | jq '[.[].height] | max // empty' 2>/dev/null || true)
+    _exp_x=$(printf '%s' "${_exp_json:-[]}" | jq '[.[].x] | min // 0' 2>/dev/null || echo 0)
+    _exp_y=$(printf '%s' "${_exp_json:-[]}" | jq '[.[].y] | min // 0' 2>/dev/null || echo 0)
+    if [ -z "${_exp_w:-}" ] || [ -z "${_exp_h:-}" ]; then
+        echo "rdp-connect --expand: no se pudo calcular el canvas (hyprctl/jq)." >&2
+        exit 1
+    fi
+
+    hyprctl dispatch "hl.dsp.window.float({ action = \"enable\", window = \"class:$EXPAND_CLASS\" })" &>/dev/null || true
+    hyprctl dispatch "hl.dsp.window.resize({ x = ${_exp_w}, y = ${_exp_h}, relative = false, window = \"class:$EXPAND_CLASS\" })" &>/dev/null || true
+    hyprctl dispatch "hl.dsp.window.move({ x = ${_exp_x}, y = ${_exp_y}, window = \"class:$EXPAND_CLASS\" })" &>/dev/null || true
+    hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"noborder\", value = \"true\", window = \"class:$EXPAND_CLASS\" })" &>/dev/null || true
+    hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"noblur\", value = \"true\", window = \"class:$EXPAND_CLASS\" })" &>/dev/null || true
+    hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"noshadow\", value = \"true\", window = \"class:$EXPAND_CLASS\" })" &>/dev/null || true
+    echo "rdp-connect --expand: '$EXPAND_PROFILE' -> ${_exp_w}x${_exp_h} en (${_exp_x},${_exp_y})."
+    unset _exp_ids _exp_json _exp_w _exp_h _exp_x _exp_y
     exit 0
 fi
 

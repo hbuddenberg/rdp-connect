@@ -16,6 +16,9 @@
 #   focus peer window : hyprctl dispatch 'hl.dsp.focus({ window = "class:..." })'
 #   move to workspace : hyprctl dispatch 'hl.dsp.window.move({ workspace, window })
 #   fullscreen (single): hyprctl dispatch 'hl.dsp.window.fullscreen({ mode, action, window })
+#   float (single/span): hyprctl dispatch 'hl.dsp.window.float({ action, window })
+#   move by coords (span): hyprctl dispatch 'hl.dsp.window.move({ x, y, window })
+#   set prop (span)     : hyprctl dispatch 'hl.dsp.window.set_prop({ prop, value, window })
 
 load test_helper
 
@@ -36,6 +39,28 @@ load test_helper
   run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'hl.dsp.window.fullscreen'"
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "hl.dsp.window.fullscreen dispatcher missing (single-mode auto-fullscreen)"
+}
+
+@test "engine_uses_lua_float_dispatcher_for_single_mode" {
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'hl.dsp.window.float'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "hl.dsp.window.float dispatcher missing (single-mode floating window for cross-monitor drag/resize)"
+}
+
+@test "engine_uses_lua_coord_move_and_set_prop_dispatchers_for_span_mode" {
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  # Span mode needs an absolute-pixel move (x/y), distinct from the existing
+  # workspace-based hl.dsp.window.move({ workspace = ... }) call — assert the
+  # coord form specifically.
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'hl.dsp.window.move({ x ='"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "hl.dsp.window.move coord form missing (span-mode positioning)"
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'hl.dsp.window.set_prop'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "hl.dsp.window.set_prop dispatcher missing (span-mode noborder/noblur/noshadow)"
 }
 
 @test "engine_uses_lua_move_dispatcher_for_workspace" {

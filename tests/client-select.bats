@@ -5,7 +5,7 @@
 #   x11 (default)  -> xfreerdp3   (XWayland, current, best for single-mon)
 #   sdl            -> sdl-freerdp3 (SDL3, needs FREERDP_WLROOTS_HACK=force +
 #                      SDL_VIDEODRIVER=wayland + grab flags for multimon input)
-#   wayland        -> wlfreerdp3  (native Wayland, single-mon)
+#   wayland        -> wlfreerdp3  (native Wayland; multimon/span/dynamic-resolution supported per 3.30)
 #
 # CLIENT profile key + --client CLI flag override. The engine uses a variable
 # binary (${_RDP_CLIENT}) instead of hardcoding xfreerdp3.

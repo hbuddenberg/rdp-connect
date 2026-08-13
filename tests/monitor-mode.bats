@@ -109,3 +109,80 @@ load test_helper
   assert_success
   [ "$output" -ge 2 ] || fail "--multi-mon should appear in parsing AND --help (found $output)"
 }
+
+@test "engine_single_mode_overrides_PREFERRED_WS_workspace_for_the_target_monitor" {
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  # A user's hyprland.conf can pin a workspace to a SPECIFIC monitor
+  # (`workspace=N,monitor:desc:...`). Confirmed live: with PREFERRED_WS
+  # statically pinned to monitor B, selecting monitor A via MONITOR_ID moved
+  # the window there for an instant, then `fullscreen` snapped it back onto
+  # workspace PREFERRED_WS's bound monitor (B) — the checkbox's monitor
+  # choice was silently overridden. Fix: _EFF_WS (defaults to PREFERRED_WS)
+  # is overridden to the TARGET monitor's own activeWorkspace when MONITOR_ID
+  # resolves one, and the background dispatcher moves to $_EFF_WS instead of
+  # the raw $PREFERRED_WS.
+  run bash -c "awk '/^    single\\)/,/^        ;;/' '$engine' | grep -cF '_EFF_WS='"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "single mode does not override _EFF_WS from the target monitor's activeWorkspace"
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'movetoworkspacesilent \"\$_EFF_WS'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "background dispatcher still moves to raw \$PREFERRED_WS instead of \$_EFF_WS"
+}
+
+@test "engine_single_mode_caps_canvas_via_MONITOR_id_override" {
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  # MONITOR_<id> (e.g. MONITOR_2="2560x1080") revived: caps the RDP canvas
+  # below the monitor's real size WITHOUT touching the monitor's own
+  # Hyprland resolution — e.g. matching a shorter neighboring monitor's
+  # content height on a taller panel, without cropping the panel's real
+  # desktop for everything else.
+  run bash -c "awk '/^    single\\)/,/^        ;;/' '$engine' | grep -cF 'MONITOR_\${MONITOR_ID}'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "single mode does not look up MONITOR_<id> via indirect expansion"
+  run bash -c "awk '/^    single\\)/,/^        ;;/' '$engine' | grep -cF '/size:\${_SINGLE_W}x\${_SINGLE_H}'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "single mode does not build /size: from the MONITOR_<id> override"
+}
+
+@test "engine_single_mode_skips_fullscreen_dispatch_when_canvas_is_capped" {
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  # `fullscreen` always fills the WHOLE monitor — it must be skipped (in
+  # favor of an exact resizewindowpixel) whenever MONITOR_<id> capped the
+  # canvas below the monitor's real size, or the cap would be silently
+  # overridden on every dispatch pass (initial AND settle retry).
+  run bash -c "grep -A5 'silently override the cap' '$engine' | grep -cF 'resizewindowpixel'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "capped-canvas branch does not use resizewindowpixel"
+}
+
+@test "engine_single_mode_re_dispatches_geometry_after_a_settle_delay" {
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  # Same defensive pattern as span mode's settle retry (tests/span-mode.bats)
+  # — added after "still doesn't work" reports for the target-monitor path
+  # even after the PREFERRED_WS/_EFF_WS fix, suggesting a timing race on the
+  # first dispatch pass rather than a pure logic bug.
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -A20 'fullscreen (single-mon)' | grep -cF 'sleep'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "single mode has no settle-retry sleep after the initial dispatch"
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -A20 'fullscreen (single-mon)' | grep -cF 'movewindowpixel'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "single mode does not re-dispatch movewindowpixel in the settle retry"
+}
+
+@test "engine_single_mode_positions_window_on_MONITOR_ID_when_set" {
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  # Revived MONITOR_ID (writer: the pre-connect checkbox menu) — single mode
+  # must compute an origin from it and the background dispatcher must move
+  # the window there before fullscreening.
+  run bash -c "awk '/^    single\\)/,/^        ;;/' '$engine' | grep -cF 'MONITOR_ID'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "single mode case arm does not consult MONITOR_ID"
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'movewindowpixel \"exact \${_SINGLE_X'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "background dispatcher does not move the window to _SINGLE_X/_SINGLE_Y"
+}

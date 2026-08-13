@@ -128,3 +128,43 @@ load test_helper
   assert_success
   [ "$output" != "0" ] || fail "/sec:nla missing"
 }
+
+# ============================================================================
+# Peripheral FLAGS arrays (usb-redirect-clipboard-windowrules change)
+# ============================================================================
+
+@test "engine_no_phantom_empty_arg_from_peripheral_flag_arrays" {
+  # Same phantom-empty-arg invariant as DPI_FLAGS/SOUND_FLAGS: the peripheral
+  # arrays MUST use "${ARR[@]}" (no `-` suffix). "${ARR[@]-}" on a declared-
+  # empty array yields a single empty-string token (argc=1), which xfreerdp3
+  # rejects with "Unsupported command line syntax".
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  for arr in USB_FLAGS DRIVE_FLAGS CLIPBOARD_FLAGS; do
+    run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF '${arr}[@]-'"
+    [ "$status" -ne 0 ] || fail "found '${arr}[@]-' in CODE — phantom empty-arg bug"
+    assert_output "0"
+  done
+}
+
+@test "engine_peripheral_arrays_expanded_with_correct_form" {
+  # The CORRECT form "${ARR[@]}" must be present for each peripheral array.
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  for arr in USB_FLAGS DRIVE_FLAGS CLIPBOARD_FLAGS; do
+    run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF '\${${arr}[@]}'"
+    [ "$status" -eq 0 ] || fail "grep failed for $arr"
+    [ "$output" != "0" ] || fail "correct expansion form missing for $arr"
+  done
+}
+
+@test "engine_peripheral_build_fns_called_alongside_sound_flags" {
+  # The 3 build fns must be invoked in the engine (not just declared in lib).
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  for fn in build_usb_flags build_drive_flags build_clipboard_flags; do
+    run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF '$fn'"
+    [ "$status" -eq 0 ] || fail "grep failed for $fn"
+    [ "$output" != "0" ] || fail "$fn not called in engine"
+  done
+}

@@ -49,26 +49,26 @@ _run_dpi_case() {
 }
 
 # ============================================================================
-# S1 (spec): scale 2.0 → HiDPI, 200%, /scale-desktop:200 /smart-sizing
+# S1 (spec): scale 2.0 → HiDPI, 200%, /scale-desktop:200
 # ============================================================================
-@test "S1: scale=2.0 -> HiDPI flags (/scale-desktop:200 /smart-sizing)" {
+@test "S1: scale=2.0 -> HiDPI flags (/scale-desktop:200)" {
   local -a warn_lines=()
   _run_dpi_case '[{"id":0,"scale":2.0}]'
   [ "$IS_HIDPI" = "1" ]
   [ "$SCALE_PCT" = "200" ]
-  [ "${DPI_FLAGS[*]}" = "/scale-desktop:200 /smart-sizing" ]
+  [ "${DPI_FLAGS[*]}" = "/scale-desktop:200" ]
   [ "${#warn_lines[@]}" = "0" ]
 }
 
 # ============================================================================
 # S2 (spec): scale 1.5 → fractional, rounds to 150
 # ============================================================================
-@test "S2: scale=1.5 -> fractional 150 (/scale-desktop:150 /smart-sizing)" {
+@test "S2: scale=1.5 -> fractional 150 (/scale-desktop:150)" {
   local -a warn_lines=()
   _run_dpi_case '[{"id":0,"scale":1.5}]'
   [ "$IS_HIDPI" = "1" ]
   [ "$SCALE_PCT" = "150" ]
-  [ "${DPI_FLAGS[*]}" = "/scale-desktop:150 /smart-sizing" ]
+  [ "${DPI_FLAGS[*]}" = "/scale-desktop:150" ]
   [ "${#warn_lines[@]}" = "0" ]
 }
 
@@ -142,4 +142,16 @@ _run_dpi_case() {
   [ "$SCALE_PCT" = "100" ]
   [ "${DPI_FLAGS[*]:-}" = "" ]
   [ "${#warn_lines[@]}" -ge 1 ]
+}
+
+# ============================================================================
+# S9 (feature): DISABLE_DPI=1 overrides HiDPI detection
+# ============================================================================
+@test "S9: DISABLE_DPI=1 -> empty flags even with HiDPI scale" {
+  local -a warn_lines=()
+  DISABLE_DPI=1 _run_dpi_case '[{"id":0,"scale":2.0}]'
+  [ "$IS_HIDPI" = "0" ]
+  [ "$SCALE_PCT" = "100" ]
+  [ "${DPI_FLAGS[*]:-}" = "" ]
+  [ "${#warn_lines[@]}" = "0" ]
 }

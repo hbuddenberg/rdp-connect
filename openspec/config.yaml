@@ -4,7 +4,7 @@ baseline_commit: ef04f56
 remote: https://github.com/hbuddenberg/rdp-connect
 
 persistence:
-  mode: openspec
+  mode: hybrid
   engram_mirror: true
   topic_key: sdd-init/rdp-connect
 
@@ -78,6 +78,6 @@ rules:
 
 delivery:
   execution_mode: interactive
-  artifact_store: openspec
+  artifact_store: hybrid
   review_budget_lines: 400
   chain_strategy: ask-on-trigger

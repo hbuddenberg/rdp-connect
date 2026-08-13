@@ -109,3 +109,20 @@ load test_helper
   [ "$_rc" -eq 0 ] || fail "parse_env_safe rejected MONITOR_MODE=span (rc=$_rc)"
   [ "${MONITOR_MODE:-}" = "span" ] || fail "MONITOR_MODE not assigned to 'span'"
 }
+
+@test "engine_re_dispatches_span_geometry_after_a_settle_delay" {
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  # SETTLE RETRY: xfreerdp3's own post-connect resolution negotiation PISA
+  # the initial resizewindowpixel/movewindowpixel dispatch — confirmed live
+  # (window visibly shrinks from the /size: canvas to a single-monitor size
+  # ~1s after the initial dispatch, then recovers once the delayed re-dispatch
+  # below fires and stays stable). Sliced to the span) case arm's background-
+  # dispatcher branch so this doesn't match single/multi's own dispatch calls.
+  run bash -c "awk '/_EFF_MODE:-multi}\" = \"span\"/,/elif ._EFF_MODE/' '$engine' | grep -cF 'sleep'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" != "0" ] || fail "span's background dispatcher has no settle-retry sleep"
+  run bash -c "awk '/_EFF_MODE:-multi}\" = \"span\"/,/elif ._EFF_MODE/' '$engine' | grep -cF 'resizewindowpixel'"
+  [ "$status" -eq 0 ] || fail "grep failed"
+  [ "$output" -ge 2 ] || fail "expected resizewindowpixel dispatched at least twice (initial + settle retry), found $output"
+}

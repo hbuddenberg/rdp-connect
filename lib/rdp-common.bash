@@ -45,6 +45,13 @@ declare -gA _PROFILE_KEYS=(
   [MONITOR_ORDER]=1
   [DYNAMIC_RESOLUTION]=1
   [CLIENT]=1
+  [USB_REDIRECT]=1
+  [USB_DEVICE_IDS]=1
+  [DRIVE_REDIRECT]=1
+  [SHARE_DIR]=1
+  [CLIPBOARD_SYNC]=1
+  [WEBCAM_REDIRECT]=1
+  [DISABLE_DPI]=1
 )
 
 # ---------------------------------------------------------------------------
@@ -258,7 +265,7 @@ compute_pid_path() {
 #
 # Reads `.[0].scale` from `hyprctl monitors -j` via a SINGLE jq invocation and
 # sets three globals:
-#   DPI_FLAGS   — bash array, empty under 100%, else (/scale-desktop:N /smart-sizing)
+#   DPI_FLAGS   — bash array, empty under 100%, else (/scale-desktop:N)
 #   IS_HIDPI    — "1" if scale > 1, else "0"
 #   SCALE_PCT   — integer percentage (e.g. 150 for scale 1.5)
 #
@@ -277,6 +284,13 @@ compute_dpi_flags() {
   IS_HIDPI=0
   SCALE_PCT=100
   DPI_FLAGS=()
+  
+  # Respect DISABLE_DPI profile option
+  if [[ "${DISABLE_DPI:-0}" == "1" ]]; then
+    log_event "INFO" "DPI scaling disabled by profile (DISABLE_DPI=1)"
+    return 0
+  fi
+  
   out=$(hyprctl monitors -j 2>/dev/null | jq -r '
       .[0].scale as $raw
     | (try ($raw | tonumber) catch null) as $n
@@ -293,7 +307,7 @@ compute_dpi_flags() {
     log_event "WARN" "unparsable monitor scale '${raw:-<missing>}'; defaulting to 100%"
   elif [[ "$IS_HIDPI" == "1" ]]; then
     # shellcheck disable=SC2034  # DPI_FLAGS consumed by engine/rdp-connect (sourced lib pattern)
-    DPI_FLAGS=("/scale-desktop:${SCALE_PCT}" "/smart-sizing")
+    DPI_FLAGS=("/scale-desktop:${SCALE_PCT}")
     log_event "INFO" "HiDPI scale ${raw} -> /scale-desktop:${SCALE_PCT}."
   fi
 }
@@ -335,6 +349,137 @@ build_mon_flags() {
     # shellcheck disable=SC2034  # MON_FLAGS consumed by engine/rdp-connect (sourced lib pattern)
     MON_FLAGS=("/f")
   fi
+}
+
+# ---------------------------------------------------------------------------
+# Peripheral flag builders (usb-redirect-clipboard-windowrules change)
+# ---------------------------------------------------------------------------
+# build_usb_flags / build_drive_flags / build_clipboard_flags — pure fns that
+# read profile globals (set by parse_env_safe) and set a FLAGS array each.
+# Mirror the build_mon_flags / compute_dpi_flags pattern: no args, read
+# globals at call time, set a global array. Arrays are ALWAYS initialized
+# (never unset) so "${ARR[@]}" expands cleanly under set -u without the
+# phantom-empty-arg gotcha ("${ARR[@]-}" yields a single '' token).
+#
+# Capability gate globals (_HAS_USB / _HAS_DRIVE / _HAS_CLIPBOARD) are set
+# by the engine's xfreerdp3 /help probes; the fns read them via ${var:-0}
+# so unit tests can set them directly without the engine present.
+
+# build_usb_flags — USB_REDIRECT=1 + USB_DEVICE_IDS=vid:pid[#vid:pid]
+#   OFF (default)            → USB_FLAGS=()
+#   ON + valid ids           → USB_FLAGS=("/usb:id:<vid:pid>#...")
+#   ON + invalid ids         → return 1 (loud reject, never reaches xfreerdp3)
+#   ON + build without /usb: → USB_FLAGS=() + log WARN (silent-skip)
+build_usb_flags() {
+  USB_FLAGS=()
+  [ "${USB_REDIRECT:-0}" = "1" ] || return 0
+  if [ "${_HAS_USB:-0}" != "1" ]; then
+    log_event "WARN" "USB redirect requested but xfreerdp3 lacks /usb: (omitted)"
+    return 0
+  fi
+  local val="${USB_DEVICE_IDS:-}"
+  if [ -z "$val" ]; then
+    log_event "WARN" "USB redirect requested but USB_DEVICE_IDS not set (omitted)"
+    return 0
+  fi
+  if ! [[ "$val" =~ ^([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})(#([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4}))*$ ]]; then
+    log_event "ERROR" "USB_DEVICE_IDS invalid: '$val' (expected vid:pid[#vid:pid])"
+    return 1
+  fi
+  # shellcheck disable=SC2034  # USB_FLAGS consumed by engine/rdp-connect (sourced lib pattern)
+  USB_FLAGS=("/usb:id:$val")
+}
+
+# build_drive_flags — DRIVE_REDIRECT (default 1), SHARE_DIR (default $HOME/Compartido)
+#   ON  (default) → DRIVE_FLAGS=("/drive:compartido,<SHARE_DIR>")
+#   OFF           → DRIVE_FLAGS=()
+build_drive_flags() {
+  DRIVE_FLAGS=()
+  [ "${DRIVE_REDIRECT:-1}" = "1" ] || return 0
+  # shellcheck disable=SC2034  # DRIVE_FLAGS consumed by engine/rdp-connect (sourced lib pattern)
+  DRIVE_FLAGS=("/drive:compartido,${SHARE_DIR:-$HOME/Compartido}")
+}
+
+# build_webcam_flags — WEBCAM_REDIRECT=1
+#   OFF (default)            → WEBCAM_FLAGS=()
+#   ON + detected camera     → WEBCAM_FLAGS=("/usb:id:<vid:pid>")
+#   ON + no camera found     → WEBCAM_FLAGS=() + log WARN
+#   ON + build without /usb: → WEBCAM_FLAGS=() + log WARN
+build_webcam_flags() {
+  WEBCAM_FLAGS=()
+  [ "${WEBCAM_REDIRECT:-0}" = "1" ] || return 0
+  if [ "${_HAS_USB:-0}" != "1" ]; then
+    log_event "WARN" "Webcam redirect requested but xfreerdp3 lacks /usb: (omitted)"
+    return 0
+  fi
+  # Auto-detect camera via lsusb (look for common webcam vendors)
+  local camera_id=""
+  if command -v lsusb &>/dev/null; then
+    # Try to find known webcam vendors: EMEET, Logitech, Microsoft, etc.
+    camera_id=$(lsusb 2>/dev/null | grep -iE "emeet|logitech|microsoft.*camera|webcam|video" | head -1 | awk '{print $6}')
+    if [ -n "$camera_id" ]; then
+      # shellcheck disable=SC2034  # WEBCAM_FLAGS consumed by engine/rdp-connect
+      WEBCAM_FLAGS=("/usb:id:$camera_id")
+      log_event "INFO" "Webcam detected: $camera_id"
+    else
+      log_event "WARN" "Webcam redirect requested but no camera detected (omitted)"
+    fi
+  else
+    log_event "WARN" "Webcam redirect requested but lsusb not available (omitted)"
+  fi
+}
+
+# build_clipboard_flags — CLIPBOARD_SYNC (default 1)
+#   ON  → CLIPBOARD_FLAGS=("+clipboard")
+#   OFF → CLIPBOARD_FLAGS=()
+build_clipboard_flags() {
+  CLIPBOARD_FLAGS=()
+  [ "${CLIPBOARD_SYNC:-1}" = "1" ] || return 0
+  # shellcheck disable=SC2034  # CLIPBOARD_FLAGS consumed by engine/rdp-connect (sourced lib pattern)
+  CLIPBOARD_FLAGS=("+clipboard")
+}
+
+# ---------------------------------------------------------------------------
+# F9 — resolve_monitor_order: MONITOR_ORDER by numeric id OR description
+# ---------------------------------------------------------------------------
+# resolve_monitor_order <monitors_json> <selector>
+#
+# <selector> is a comma-separated list of tokens, same shape as
+# MONITOR_ORDER/--monitor-order. Each token is EITHER a numeric hyprctl id
+# (passed through unchanged) OR a case-insensitive substring matched against
+# each monitor's `.description` (e.g. "Dell Inc. DELL U2417H XVNNT6BTAPBL") —
+# port names/ids renumber across a reboot or replug (confirmed on real
+# hardware: the same 3 monitors enumerated as DP-4/DP-9/DP-8 one session and
+# DP-3/DP-5/DP-6 the next), description does not.
+#
+# Prints the resolved comma-separated id list on stdout, preserving the
+# selector's original token order. Returns 1 (diagnostic on stderr, no
+# stdout) if any description token matches zero or more than one monitor —
+# an ambiguous/missing selector must hard-fail, not silently drop a monitor
+# out of the canvas or resolve to the wrong physical output.
+resolve_monitor_order() {
+  local mon_json="$1" selector="$2"
+  local -a tokens=() resolved=()
+  local tok id_matches count
+  IFS=',' read -ra tokens <<< "$selector"
+  for tok in "${tokens[@]}"; do
+    tok="${tok#"${tok%%[![:space:]]*}"}"   # trim leading whitespace
+    tok="${tok%"${tok##*[![:space:]]}"}"   # trim trailing whitespace
+    [ -z "$tok" ] && continue
+    if [[ "$tok" =~ ^[0-9]+$ ]]; then
+      resolved+=("$tok")
+      continue
+    fi
+    id_matches=$(printf '%s' "$mon_json" | jq -r --arg q "$tok" \
+      '[.[] | select((.description // "") != "" and ((.description | ascii_downcase) | contains($q | ascii_downcase)))] | .[].id' 2>/dev/null)
+    count=$(printf '%s' "$id_matches" | grep -c . || true)
+    if [ "$count" -ne 1 ]; then
+      printf 'resolve_monitor_order: "%s" matched %d monitor(s) via description (need exactly 1)\n' "$tok" "$count" >&2
+      return 1
+    fi
+    resolved+=("$id_matches")
+  done
+  ( IFS=,; printf '%s\n' "${resolved[*]}" )
 }
 
 # ---------------------------------------------------------------------------
@@ -407,6 +552,44 @@ profile_has_tunables_block() {
   grep -qF "$PROFILE_TUNABLES_MARKER" "$1" 2>/dev/null
 }
 
+# ---------------------------------------------------------------------------
+# set_profile_key — idempotent single-key rewrite for a profile .env
+# ---------------------------------------------------------------------------
+# set_profile_key <file> <key> <value>
+#
+# Rewrites the first line whose TRIMMED start is exactly "<key>=" to
+# `key="value"`, preserving every other line byte-for-byte (including
+# commented-out example lines like `# MONITOR_ORDER=1,3,2` in the tunables
+# block — the "<key>=" match requires the trimmed line to start with the key
+# itself, so a leading `#` never matches). Appends `key="value"` at EOF if no
+# such line exists. Returns 1 if <file> does not exist.
+#
+# Used by the engine's pre-connect checkbox menu to persist the user's
+# monitor/audio selection so the NEXT launch pre-checks the same state
+# ("recordar el ultimo estado"). Deliberately NOT built on parse_env_safe —
+# this is a raw line rewrite, not a value read; it never sources/evals the
+# file either way. Values are wrapped in double quotes verbatim: callers pass
+# only the fixed, script-generated values this engine writes back
+# (MONITOR_MODE/MONITOR_ORDER/MONITOR_ID/AUDIO_REDIRECT) — never raw user
+# free text — so no quote-escaping is implemented.
+set_profile_key() {
+  local file="$1" key="$2" value="$3"
+  [ -f "$file" ] || return 1
+  local tmp found=0 line trimmed
+  tmp="$(mktemp)"
+  while IFS= read -r line || [ -n "$line" ]; do
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    if [ "$found" -eq 0 ] && [[ "$trimmed" == "${key}="* ]]; then
+      printf '%s="%s"\n' "$key" "$value" >> "$tmp"
+      found=1
+    else
+      printf '%s\n' "$line" >> "$tmp"
+    fi
+  done < "$file"
+  [ "$found" -eq 0 ] && printf '%s="%s"\n' "$key" "$value" >> "$tmp"
+  mv "$tmp" "$file"
+}
+
 append_tunables_block() {
   # Returns 0 whether the block was already present or just added, so the caller
   # treats any non-failure as success. Non-zero only on missing file.
@@ -422,10 +605,20 @@ append_tunables_block() {
 # MONITOR_MODE=multi          # multi (default) | single
 # MONITOR_ID=0                # single: which monitor (0-based hyprctl id)
 # MONITORS=3                  # multi: use first N detected monitors
-# MONITOR_ORDER=1,3,2         # multi: physical IDs in this order (-> /monitors:)
+# MONITOR_ORDER=1,3,2         # multi/span/expand: IDs in this order (-> /monitors:).
+#                             # Tokens may also be a description substring
+#                             # (hyprctl monitors -j .description, e.g. "ASUS" or
+#                             # a serial to disambiguate identical models) —
+#                             # survives port/id renumbering across reboots,
+#                             # unlike numeric IDs. Mix freely: "ASUS,0".
 # MONITOR_0=1920x1080         # single: resolution for monitor id 0
 # MONITOR_1=1920x1080
 # MONITOR_2=2560x1440
 # DYNAMIC_RESOLUTION=1        # single: windowed, res follows window (Win8.1+ server)
+# USB_REDIRECT=0              # 1=redirect USB device (opt-in); 0=off (default)
+# USB_DEVICE_IDS=0781:5580    # vid:pid[#vid:pid] hex (required when USB_REDIRECT=1)
+# DRIVE_REDIRECT=1            # 1=shared drive (default); 0=off
+# SHARE_DIR=$HOME/Compartido  # local path shared to remote (default: $HOME/Compartido)
+# CLIPBOARD_SYNC=1            # 1=clipboard sync (default); 0=off
 EOF_TUNABLES_BLOCK
 }

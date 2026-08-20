@@ -19,3 +19,10 @@ profiles/*.env
 .DS_Store
 .idea/
 .vscode/
+
+# Tooling ajeno al proyecto (ver CLAUDE.md: node_modules/package.json no son parte del framework)
+node_modules/
+package.json
+package-lock.json
+.atl/
+.gga

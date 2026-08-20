@@ -1285,7 +1285,7 @@ if [ "${COMPOSITOR:-}" != "none" ]; then
 fi  # end COMPOSITOR != none (D9: no dispatcher subshell under none)
 
 export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
-export LIBVA_DRIVER_NAME=iHD
+# Allow VA-API driver auto-detection (i965/iHD/radeonsi) by omitting hardcoded driver name
 
 notify-send -i display "RDP Framework" "$(printf "$MSG_CONNECTING" "$PROFILE" "$MON_COUNT")" || true
 

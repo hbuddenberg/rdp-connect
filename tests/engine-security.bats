@@ -85,6 +85,56 @@ load test_helper
 }
 
 # ============================================================================
+# Structural — password-pipe adjacency (compositor-aware tasks 2.6)
+# ============================================================================
+
+@test "password_pipe_region_free_of_compositor_layer" {
+  # Spec compositor-backends: "The adapter layer MUST NOT interpose between
+  # the password pipe and the xfreerdp3 argv" (design: password pipe block
+  # byte-identical, adapters are not part of the connection pipeline).
+  #
+  # Two halves:
+  #   1. the anchor forms of the credential pipe + argv region are present
+  #      BYTE-IDENTICALLY (echo "$PASS_RDP" | { exec 200>&-; ... /from-stdin:
+  #      force ... "${ARR[@]}" no-dash expansions ... auto-reconnect);
+  #   2. from the pipe line to EOF, CODE contains zero compositor-layer
+  #      tokens (hyprctl / niri msg / dispatch wrappers / monitor queries /
+  #      detection) — nothing may be injected between the password and
+  #      xfreerdp3, nor after it.
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+
+  # 1. Byte-identical anchors (grep -F: any drift fails the test). Trailing
+  #    line-continuation backslashes are part of the byte-exact expectation.
+  grep -qF 'echo "$PASS_RDP" | { exec 200>&-; ${_RDP_CLIENT} \' "$engine" \
+    || fail "password pipe anchor line changed"
+  grep -qF '  /from-stdin:force \' "$engine" \
+    || fail "/from-stdin:force argv line changed"
+  grep -qF '  /wm-class:"$WM_CLASS" \' "$engine" \
+    || fail "/wm-class argv line changed"
+  grep -qF '  "${MON_FLAGS[@]}" \' "$engine" \
+    || fail '"${MON_FLAGS[@]}" expansion form changed'
+  grep -qF '  "${DPI_FLAGS[@]}" \' "$engine" \
+    || fail '"${DPI_FLAGS[@]}" expansion form changed'
+  grep -qF '/auto-reconnect-max-retries:10; } > >(while IFS= read -r _rdp_line; do' "$engine" \
+    || fail "argv-group + process-substitution anchor changed"
+
+  # 2. Zero compositor-layer tokens in CODE from the pipe line to EOF.
+  local tail_region
+  tail_region=$(awk '/echo "\$PASS_RDP" \| \{/,0' "$engine" | grep -vE '^[[:space:]]*#')
+  [ -n "$tail_region" ] || fail "password pipe region not found for scanning"
+  if printf '%s\n' "$tail_region" | grep -qE 'hyprctl|niri msg|dispatch_|get_monitors_json|compositor_find_window|detect_compositor'; then
+    fail "compositor layer interposes in/after the password pipe region"
+  fi
+  # The "${ARR[@]-}" phantom-empty-arg form must never appear here either
+  # (freerdp3-flags locks it engine-wide; this pins it to the credential
+  # region specifically).
+  if printf '%s\n' "$tail_region" | grep -qE '\[@\]-'; then
+    fail 'phantom-empty-arg "${ARR[@]-}" form in the password pipe region'
+  fi
+}
+
+# ============================================================================
 # Behavioral — allowlist invariant (engine-security-delta R2)
 # ============================================================================
 

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 
 # T2.2 (F4): strict mode for the entire engine. Tactical `|| true` is applied
-# ONLY to documented cosmetic Hyprland IPC (hyprctl keyword/dispatch) and
-# notify-send calls — NEVER on xfreerdp3, flock, jq, file tests, or any
-# security-relevant call (per engine-robustness-delta R2 mitigation).
+# ONLY to documented cosmetic compositor dispatch and notify-send calls —
+# since compositor-aware PR2 those live in the lib dispatch wrappers
+# (lib/rdp-common.bash::_hypr_dispatch/_niri_dispatch) and the raw --expand
+# block (PR3-pending) — NEVER on xfreerdp3, flock, jq, file tests, or any
+# security-relevant call (per engine-robustness spec).
 set -euo pipefail
 
 # multi-peer-race (F-G fix part 1): become a session leader so the EXIT trap
@@ -121,8 +123,9 @@ source "$LIB_FILE"
 # F6: require_cmd exits 127 if a binary is missing. Done BEFORE any profile is
 # loaded so a missing dep never reaches a credential-adjacent code path. The
 # wofi|rofi launcher OR-check is deferred to selector mode (only needed there).
+# The compositor CLI is NOT in this fixed list: it is detection-conditional
+# (compositor-aware D7) — see detect_compositor right after load_language.
 require_cmd xfreerdp3 freerdp3
-require_cmd hyprctl hyprland
 require_cmd jq jq
 require_cmd notify-send libnotify
 require_cmd flock util-linux
@@ -179,6 +182,21 @@ load_language() {
 }
 load_language
 
+# --- COMPOSITOR DETECTION + CONDITIONAL PREFLIGHT (compositor-aware D4/D7) ---
+# detect_compositor (lib) probe-decides the backend (env hints only ORDER the
+# candidates; a wrong-compositor CLI answering rc=1 plain text never decides)
+# and sets COMPOSITOR ∈ {hypr, niri, none}. It MUST run after load_language
+# (tasks decision (b)) so the none-mode WARN flows through MSG_COMPOSITOR_NONE
+# in the normal message pipeline. The compositor CLI itself is required ONLY
+# for the detected backend; under none nothing is required — the detection
+# WARN already named the degraded mode, and the engine continues (D9).
+detect_compositor
+case "${COMPOSITOR:-}" in
+    hypr) require_cmd hyprctl hyprland ;;
+    niri) require_cmd niri niri ;;
+    none) : ;;
+esac
+
 # --- PARSER SEGURO DE CONFIGURACIÓN (Previene inyección de código Bash) ---
 # La implementación vive en lib/rdp-common.bash (sourced arriba como LIB_FILE).
 # Permite allowlist estricto (HOST, USER_RDP, PASS_RDP, DOMAIN, VPN_CHECK,
@@ -219,6 +237,21 @@ if [ "${1:-}" == "--expand" ]; then
     EXPAND_PROFILE="${2:-}"
     [ -z "$EXPAND_PROFILE" ] && { echo "Uso: rdp-connect --expand <perfil>" >&2; exit 1; }
     EXPAND_CLASS="rdp-${EXPAND_PROFILE}"
+
+    # compositor-aware PR2 guard: expand positioning under niri is gated on
+    # the D8 live verification (abs-vs-delta semantics, coordinate space,
+    # XWayland app_id mapping — PR3 task 3.1). Refuse with a WARN instead of
+    # firing raw hyprctl at the wrong compositor. Under COMPOSITOR=none this
+    # guard is not needed: the find-window check below can never succeed
+    # (no session window exists), so --expand fails with its existing
+    # "no hay sesión activa" message (D9). Everything below stays raw
+    # hyprctl until PR3 migrates it behind the wrappers — allowlisted by
+    # niri-api.bats::no_raw_compositor_ipc_in_engine.
+    if [ "${COMPOSITOR:-}" = "niri" ]; then
+        log_event "WARN" "--expand bajo niri: pendiente del gate de verificación en vivo (D8, PR3). COMPOSITOR=niri."
+        echo "rdp-connect --expand: soporte niri llega tras el gate de verificación en vivo (PR3)." >&2
+        exit 1
+    fi
 
     if ! hyprctl clients -j 2>/dev/null | jq -e --arg c "$EXPAND_CLASS" 'any(.[]; .class==$c)' >/dev/null 2>&1; then
         echo "rdp-connect --expand: no hay sesión activa para '$EXPAND_PROFILE' (class=$EXPAND_CLASS)." >&2
@@ -455,11 +488,18 @@ trim_profile_fields
 # CLI ya expresa la intención, no hay nada que preguntar — mismo criterio de
 # precedencia "flag > config" que el resto del engine), o si no hay
 # wofi/walker disponible (degradación silenciosa, igual que el selector de
-# perfiles). El modo `multi` (/multimon nativo) queda fuera del checkbox a
-# propósito — el caso real de uso de este menú es single (1 marcado) o span
-# (2+ marcados, ventana única); `--multi-mon` sigue disponible a mano.
-if [ -z "${MONITOR_MODE_OVERRIDE:-}" ] && { command -v walker &>/dev/null || command -v wofi &>/dev/null; }; then
-    _pm_json=$(hyprctl monitors -j 2>/dev/null | jq -c '[.[] | select((.description // "") != "")] | sort_by(.x)' 2>/dev/null || echo '[]')
+# perfiles), o bajo COMPOSITOR=none (compositor-aware D9: sin backend no hay
+# monitores que listar — twin del skip sin-wofi). El modo `multi` (/multimon
+# nativo) queda fuera del checkbox a propósito — el caso real de uso de este
+# menú es single (1 marcado) o span (2+ marcados, ventana única); `--multi-mon`
+# sigue disponible a mano.
+#
+# compositor-aware PR2: el menú lee el MODELO CANÓNICO (get_monitors_json —
+# campo `.desc`, ya ordenado por x) en vez de JSON crudo de hyprctl; funciona
+# idéntico bajo hypr (paridad byte: mismos ids/descripciones) y bajo niri
+# (id = nombre del output).
+if [ -z "${MONITOR_MODE_OVERRIDE:-}" ] && [ "${COMPOSITOR:-}" != "none" ] && { command -v walker &>/dev/null || command -v wofi &>/dev/null; }; then
+    _pm_json=$(get_monitors_json | jq -c '[.[] | select((.desc // "") != "")]' 2>/dev/null || echo '[]')
     _pm_count=$(printf '%s' "$_pm_json" | jq 'length' 2>/dev/null || echo 0)
     if [ "${_pm_count:-0}" -gt 0 ] 2>/dev/null; then
         declare -A _pm_checked=()
@@ -496,7 +536,7 @@ if [ -z "${MONITOR_MODE_OVERRIDE:-}" ] && { command -v walker &>/dev/null || com
                 _pm_line="${_pm_mark} 󰍹 ${_pm_desc}"
                 _pm_line_id["$_pm_line"]="$_pm_id"
                 _pm_items+=("$_pm_line")
-            done < <(printf '%s' "$_pm_json" | jq -r '.[] | "\(.id)\t\(.description)"')
+            done < <(printf '%s' "$_pm_json" | jq -r '.[] | "\(.id)\t\(.desc)"')
             _pm_amark="[ ]"
             [ "$_pm_audio" -eq 1 ] && _pm_amark="[x]"
             _pm_aline="${_pm_amark} 󰕾 Audio en este equipo (cliente)"
@@ -562,10 +602,13 @@ if [ -z "${MONITOR_MODE_OVERRIDE:-}" ] && { command -v walker &>/dev/null || com
             set_profile_key "$ENV_FILE" MONITOR_MODE single
             set_profile_key "$ENV_FILE" MONITOR_ID "$MONITOR_ID"
         elif [ "$_pm_n" -gt 1 ]; then
+            # Canonical ids are compared as STRINGS (D3): hypr numeric ids
+            # and niri output names both round-trip; desc is the persisted
+            # token (survives reboots — see resolve_monitor_order).
             _pm_order=$(printf '%s' "$_pm_json" | jq -r --arg ids "$(IFS=,; echo "${!_pm_checked[*]}")" \
-                '($ids | split(",") | map(tonumber)) as $sel
-                 | [.[] | select(.id as $i | $sel | index($i) != null)]
-                 | sort_by(.x) | [.[].description] | join(",")' 2>/dev/null || true)
+                '($ids | split(",")) as $sel
+                 | [.[] | select(($sel | index((.id | tostring))) != null)]
+                 | sort_by(.x) | [.[].desc] | join(",")' 2>/dev/null || true)
             if [ -n "${_pm_order:-}" ]; then
                 MONITOR_MODE=span
                 MONITOR_ORDER="$_pm_order"
@@ -783,14 +826,13 @@ log_event "INFO" "Puerto 3389 en $HOST respondiendo correctamente."
 # Null / missing / non-numeric scale → WARN + 100% fallback (session proceeds).
 compute_dpi_flags
 
-# --- MULTI-MONITOR Y REGLAS DE HYPRLAND ---
-# sort_by(.x): hyprctl's numeric monitor `id` is assigned by detection/
-# connection order, NOT physical left-to-right position (confirmed on real
-# hardware: DP-3 id=0 x=1920, DP-6 id=2 x=3840, DP-5 id=1 x=6400). This
-# sorts the DEFAULT "all detected" list (MONITOR_ORDER/--monitor-order
-# overrides bypass it, unchanged) so the WINDOW POSITIONING math (multi/span,
-# which uses Hyprland's real coordinates via hyprctl) lands correctly — and
-# it does (confirmed: window origin matched the real leftmost monitor).
+# --- MULTI-MONITOR Y REGLAS DE COMPOSITOR ---
+# compositor-aware PR2: all monitor reads go through get_monitors_json (lib)
+# — ONE canonical logical array per backend, cached (≤1 IPC per run). Under
+# hypr the canonical array is `sort_by(.x)`-ordered with detection-order
+# numeric ids, so _MON_IDS/MON_COUNT are byte-identical to the previous raw
+# `hyprctl monitors -j | jq` pipeline (the ordering rationale comment below
+# is preserved verbatim — the sort now lives in the lib adapter).
 #
 # KNOWN UNVERIFIED GAP (multi mode only): this sort does NOT guarantee
 # /multimon's PER-MONITOR CONTENT ends up on the right physical monitor.
@@ -802,8 +844,15 @@ compute_dpi_flags
 # only be confirmed by watching the screen. span mode is NOT affected (it
 # sends ONE /size:<canvas> desktop, never asks FreeRDP to split content per
 # monitor id) — prefer --span over --multi-mon when this ambiguity matters.
-_MON_IDS=$(hyprctl monitors -j | jq -r 'sort_by(.x) | .[].id' | paste -sd, -)
-MON_COUNT=$(hyprctl monitors -j | jq '. | length')
+_MON_IDS=$(get_monitors_json | jq -r '.[].id' | paste -sd, -)
+MON_COUNT=$(get_monitors_json | jq '. | length')
+# D9: the none backend reports zero monitors — treat as exactly ONE (the
+# RDP canvas itself) so build_mon_flags emits /f and the notify line stays
+# sane. Monitor queries never abort the engine under any backend (the
+# canonical layer degrades to [] with a WARN from detection).
+if [ "${COMPOSITOR:-}" = "none" ]; then
+    MON_COUNT=1
+fi
 # F8: MON_FLAGS is an array, not a string. build_mon_flags (in lib) sets
 # MON_FLAGS=("/multimon" "/monitors:<ids>") or ("/f"). Expanded at the
 # xfreerdp3 invocation site below as "${MON_FLAGS[@]}".
@@ -829,6 +878,17 @@ MON_FLAGS=()
 # below when MONITOR_ID targets a monitor other than wherever PREFERRED_WS
 # happens to be pinned in the user's hyprland.conf (see the MONITOR_ID block).
 _EFF_WS="${PREFERRED_WS:-}"
+# D9 (compositor-aware): under COMPOSITOR=none there are no backend
+# monitors and no window management — exactly one logical monitor (the RDP
+# canvas), plain fullscreen, no geometry dispatch (the background
+# dispatcher subshell below is skipped entirely under none). The mode case
+# below is wrapped rather than re-indented: a 190-line re-indent would be
+# pure churn on a byte-parity-critical block.
+if [ "${COMPOSITOR:-}" = "none" ]; then
+    _EFF_MODE=none
+    MON_FLAGS=("/f")
+    log_event "INFO" "Modo none (sin compositor): /f, DPI 100%."
+else
 case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
     single)
         _EFF_MODE=single
@@ -845,27 +905,32 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         MON_FLAGS=("+dynamic-resolution")
         # MONITOR_ID (revived — the pre-connect checkbox menu is the only
         # writer of this key now): when set, position the window on that
-        # monitor's logical origin before fullscreening it. Same jq-based
-        # LOGICAL (scale-adjusted) origin math as span/multi's _SPAN_X/_MULTI_X
-        # (see those for why /.scale matters) — _SINGLE_X/_SINGLE_Y consumed
-        # by the background dispatcher below.
+        # monitor's logical origin before fullscreening it. Same
+        # LOGICAL-origin math as span/multi (canonical x/y are already
+        # logical — the /scale conversion lives ONLY in the lib hypr
+        # adapter) — _SINGLE_X/_SINGLE_Y consumed by the background
+        # dispatcher below. Token match per D3 (string compare): hypr
+        # numeric ids and niri output names both resolve.
         if [ -n "${MONITOR_ID:-}" ]; then
-            _single_json=$(hyprctl monitors -j 2>/dev/null | jq -c --arg id "$MONITOR_ID" \
-                '[.[] | select(.id == ($id | tonumber))]' 2>/dev/null || echo '[]')
+            _single_json=$(get_monitors_json | jq -c --arg id "$MONITOR_ID" \
+                '[.[] | select((.id | tostring) == $id)]' 2>/dev/null || echo '[]')
             _SINGLE_X=$(printf '%s' "$_single_json" | jq '[.[].x] | min // empty' 2>/dev/null || true)
             _SINGLE_Y=$(printf '%s' "$_single_json" | jq '[.[].y] | min // empty' 2>/dev/null || true)
             # PREFERRED_WS is a STATIC profile key — but the user's
-            # hyprland.conf can pin a workspace to a SPECIFIC monitor
-            # (`workspace=N,monitor:desc:...`). Confirmed live: `fullscreen`
-            # below reconciles a floating window back onto its WORKSPACE's
-            # bound monitor, silently undoing movewindowpixel's target the
-            # instant it fires — MONITOR_ID landed the window at the right
-            # x/y for a moment, then it snapped to PREFERRED_WS's pinned
-            # monitor instead. Use the TARGET monitor's own currently-active
-            # workspace so the checkbox's monitor choice wins over a stale
-            # PREFERRED_WS. _EFF_WS defaults to PREFERRED_WS further up;
-            # only override it when this lookup actually succeeds.
-            _single_ws=$(printf '%s' "$_single_json" | jq -r '.[0].activeWorkspace.id // empty' 2>/dev/null || true)
+            # compositor config can pin a workspace to a SPECIFIC monitor
+            # (hyprland: `workspace=N,monitor:desc:...`). Confirmed live:
+            # `fullscreen` below reconciles a floating window back onto its
+            # WORKSPACE's bound monitor, silently undoing movewindowpixel's
+            # target the instant it fires — MONITOR_ID landed the window at
+            # the right x/y for a moment, then it snapped to PREFERRED_WS's
+            # pinned monitor instead. Use the TARGET monitor's own
+            # currently-active workspace so the checkbox's monitor choice
+            # wins over a stale PREFERRED_WS. _EFF_WS defaults to
+            # PREFERRED_WS further up; only override it when this lookup
+            # actually succeeds. ws_ref is canonical (hypr: activeWorkspace
+            # id, byte-identical; niri: active ws NAME; null-tolerant →
+            # PREFERRED_WS passthrough when the output has no active ws).
+            _single_ws=$(printf '%s' "$_single_json" | jq -r '.[0].ws_ref // empty' 2>/dev/null || true)
             [ -n "${_single_ws:-}" ] && _EFF_WS="$_single_ws"
             unset _single_json _single_ws
             # MONITOR_<id> (also revived — e.g. MONITOR_2="2560x1080"): caps
@@ -910,11 +975,12 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         # of where they sit in the global Hyprland layout.
         _EFF_MODE=span
         _order="${MONITOR_ORDER_OVERRIDE:-${MONITOR_ORDER:-}}"
-        # Tokens may be numeric hyprctl ids OR description substrings — see
-        # resolve_monitor_order (lib). Resolution failure (ambiguous/missing
-        # description) degrades to auto-detection rather than aborting the
-        # whole launch — same spirit as the canvas-math fallback below.
-        if [ -n "$_order" ] && ! _order=$(resolve_monitor_order "$(hyprctl monitors -j)" "$_order"); then
+        # Tokens may be numeric hypr ids, niri output names, OR description
+        # substrings — see resolve_monitor_order (lib). Resolution failure
+        # (ambiguous/missing description) degrades to auto-detection rather
+        # than aborting the whole launch — same spirit as the canvas-math
+        # fallback below.
+        if [ -n "$_order" ] && ! _order=$(resolve_monitor_order "$(get_monitors_json)" "$_order"); then
             log_event "WARN" "Modo span: MONITOR_ORDER no se pudo resolver (id o descripción inválida/ambigua); usando detección automática."
             _order=""
         fi
@@ -927,21 +993,23 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         else
             _span_ids="$_MON_IDS"
         fi
-        _span_json=$(hyprctl monitors -j 2>/dev/null | jq -c --arg ids "$_span_ids" \
-            '($ids | split(",") | map(tonumber)) as $sel
-             | [.[] | select(.id as $i | $sel | index($i) != null)]' 2>/dev/null || true)
+        # Canonical selection: ids match as STRINGS (D3) — hypr numerics and
+        # niri output names both work through the same expression.
+        _span_json=$(get_monitors_json | jq -c --arg ids "$_span_ids" \
+            '($ids | split(",")) as $sel
+             | [.[] | select(($sel | index((.id | tostring))) != null)]' 2>/dev/null || true)
         # _SPAN_W/_SPAN_H (uppercase, like _SPAN_X/_SPAN_Y) persist to the
-        # background dispatcher subshell for the resizewindowpixel call.
+        # background dispatcher subshell for the resize dispatch.
         #
-        # width/height / .scale: hyprctl reports PHYSICAL pixel width/height,
-        # but movewindowpixel/resizewindowpixel/x/y all operate in Hyprland's
-        # LOGICAL (scale-adjusted) coordinate space — confirmed live: two
-        # 1920x1080 monitors at scale 0.75 report logical width 2560
-        # (matching a real 2560x1440 monitor at scale 1.0's x-spacing of
-        # 2560). Raw physical width/height would undersize the canvas on any
-        # scaled monitor.
-        _SPAN_W=$(printf '%s' "${_span_json:-[]}" | jq '[.[] | (.width / .scale) | round] | add // empty' 2>/dev/null || true)
-        _SPAN_H=$(printf '%s' "${_span_json:-[]}" | jq '[.[] | (.height / .scale) | round] | max // empty' 2>/dev/null || true)
+        # Canonical w/h are ALREADY LOGICAL px: the physical→logical /scale
+        # division happened exactly once, inside the lib hypr adapter
+        # (compositor-backends::hypr-owns-/scale; under niri logical.* passes
+        # through unconverted). The engine never divides by scale anymore —
+        # confirmed-live rationale preserved: hyprctl reports PHYSICAL
+        # pixels while all window geometry operates in LOGICAL space (two
+        # 1920x1080 monitors at scale 0.75 report logical width 2560).
+        _SPAN_W=$(printf '%s' "${_span_json:-[]}" | jq '[.[] | .w] | add // empty' 2>/dev/null || true)
+        _SPAN_H=$(printf '%s' "${_span_json:-[]}" | jq '[.[] | .h] | max // empty' 2>/dev/null || true)
         _SPAN_X=$(printf '%s' "${_span_json:-[]}" | jq '[.[].x] | min // 0' 2>/dev/null || echo 0)
         _SPAN_Y=$(printf '%s' "${_span_json:-[]}" | jq '[.[].y] | min // 0' 2>/dev/null || echo 0)
         if [ -n "${_SPAN_W:-}" ] && [ -n "${_SPAN_H:-}" ]; then
@@ -953,7 +1021,7 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
             MON_FLAGS=("/size:${_SPAN_W}x${_SPAN_H}" "+dynamic-resolution")
             log_event "INFO" "Modo span: monitores [$_span_ids] -> canvas ${_SPAN_W}x${_SPAN_H} en (${_SPAN_X},${_SPAN_Y}), +dynamic-resolution."
         else
-            log_event "WARN" "Modo span: no se pudo calcular el canvas (hyprctl/jq). Fallback a multi-monitor."
+            log_event "WARN" "Modo span: no se pudo calcular el canvas (compositor/jq). Fallback a multi-monitor."
             build_mon_flags "$MON_COUNT" "$_MON_IDS"
             _EFF_MODE=multi
         fi
@@ -973,10 +1041,10 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         # NOTE: per-monitor resolution (MONITOR_<id>) is IGNORED in multi —
         # FreeRDP /multimon uses each monitor's native resolution.
         _order="${MONITOR_ORDER_OVERRIDE:-${MONITOR_ORDER:-}}"
-        # Tokens may be numeric hyprctl ids OR description substrings — see
-        # resolve_monitor_order (lib). Resolution failure degrades to
-        # auto-detection rather than aborting the launch.
-        if [ -n "$_order" ] && ! _order=$(resolve_monitor_order "$(hyprctl monitors -j)" "$_order"); then
+        # Tokens may be numeric hypr ids, niri output names, OR description
+        # substrings — see resolve_monitor_order (lib). Resolution failure
+        # degrades to auto-detection rather than aborting the launch.
+        if [ -n "$_order" ] && ! _order=$(resolve_monitor_order "$(get_monitors_json)" "$_order"); then
             log_event "WARN" "Modo multi-monitor: MONITOR_ORDER no se pudo resolver (id o descripción inválida/ambigua); usando detección automática."
             _order=""
         fi
@@ -1004,14 +1072,16 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         # specific physical outputs. FreeRDP negotiates the window's SIZE
         # itself from /monitors:<ids>, so only the origin is computed here —
         # no forced resize (unlike --expand's riskier absolute-resize call).
-        _multi_json=$(hyprctl monitors -j 2>/dev/null | jq -c --arg ids "$_MULTI_IDS" \
-            '($ids | split(",") | map(tonumber)) as $sel
-             | [.[] | select(.id as $i | $sel | index($i) != null)]' 2>/dev/null || true)
+        # Canonical selection: ids match as STRINGS (D3), same as span.
+        _multi_json=$(get_monitors_json | jq -c --arg ids "$_MULTI_IDS" \
+            '($ids | split(",")) as $sel
+             | [.[] | select(($sel | index((.id | tostring))) != null)]' 2>/dev/null || true)
         _MULTI_X=$(printf '%s' "${_multi_json:-[]}" | jq '[.[].x] | min // 0' 2>/dev/null || echo 0)
         _MULTI_Y=$(printf '%s' "${_multi_json:-[]}" | jq '[.[].y] | min // 0' 2>/dev/null || echo 0)
         unset _multi_json
         ;;
 esac
+fi  # end COMPOSITOR != none (D9 none-wrap around the monitor-mode case)
 
 # --- AUDIO TOGGLE (AUDIO_REDIRECT profile key + --no-audio CLI override) ---
 # Three modes, matching mstsc "Remote Audio Playback":
@@ -1076,16 +1146,23 @@ case "$_eff_client" in
         ;;
 esac
 
-# --- BACKGROUND WINDOW MANAGEMENT (classic hyprctl dispatch) ---
+# --- BACKGROUND WINDOW MANAGEMENT (compositor dispatch wrappers) ---
 # Action-based (the window must already exist), but xfreerdp3 hasn't created
 # it yet. Spawn a background subshell that polls for the window by class,
 # then: moves it to PREFERRED_WS, focuses it, and applies the mode-specific
 # geometry. Runs concurrently with the xfreerdp3 pipeline below.
-# `hyprctl dispatch <dispatcher> <args>` — classic hyprlang form; `class:
-# $WM_CLASS` is the window selector accepted by that arg string. NOT `hl.dsp.*`
-# Lua (requires the optional Lua config manager, not in use here — see the
-# comment right before the subshell for how this was confirmed live).
-# See tests/hyprland-api.bats + wiki/Using-hyprctl.
+#
+# compositor-aware PR2: ALL compositor IPC here goes through the lib
+# dispatch wrappers (design D6). Under hypr they emit the CLASSIC
+# `hyprctl dispatch <dispatcher> <args>` argv byte-identically
+# (regression-locked by compositor-backends.bats::dispatch_golden_argv_hypr_forms
+# + hyprland-api.bats — NOT the `hl.dsp.*` Lua API, which requires the
+# optional Lua config manager). Under niri the workspace move + focus use
+# the live-verified forms; the GEOMETRY branch (float/resize/move/
+# fullscreen) is hypr-only pending the D8 live gate (PR3) — under niri it
+# WARNs and skips rather than firing unverified positioning at the session.
+# Under COMPOSITOR=none the whole subshell is skipped (D9).
+if [ "${COMPOSITOR:-}" != "none" ]; then
 (
     # Close the lock fd so this background subshell does NOT independently hold
     # the flock — only the main engine process holds it. Otherwise the lock
@@ -1094,112 +1171,118 @@ esac
     exec 200>&-
     _tries=0
     while [ "$_tries" -lt 30 ]; do
-        if hyprctl clients -j 2>/dev/null | jq -e --arg c "$WM_CLASS" 'any(.[]; .class==$c)' >/dev/null 2>&1; then
+        if compositor_find_window "$WM_CLASS"; then
             break
         fi
         sleep 0.2
         _tries=$((_tries+1))
     done
-    # CLASSIC hyprctl dispatch syntax (NOT the Lua hl.dsp.* API — that only
-    # works when Hyprland's optional Lua config manager is active; `hyprctl
-    # eval` errors "eval is only supported with the lua config manager" on a
-    # classic-hyprlang setup, and `hyprctl dispatch "hl.dsp...."` errors
-    # "Invalid dispatcher". Every command below was verified live against a
-    # running rdp-* window on Hyprland 0.56.1 with classic config — see
-    # tests/hyprland-api.bats for the exact confirmed forms.
-    #
     # ORDER MATTERS: resizewindowpixel and movetoworkspacesilent both reset
-    # the window's absolute position as a side effect (confirmed live), so
-    # the final movewindowpixel (exact placement) must always run LAST.
+    # the window's absolute position as a side effect (confirmed live on
+    # Hyprland), so the final movewindowpixel (exact placement) must always
+    # run LAST. The wrappers preserve this order 1:1 (hypr argv identical —
+    # see compositor-backends.bats for the byte-identical golden capture).
     if [ -n "${_EFF_WS:-}" ]; then
-        hyprctl dispatch movetoworkspacesilent "$_EFF_WS,class:$WM_CLASS" &>/dev/null || true
+        dispatch_move_to_ws "$_EFF_WS"
         log_event "INFO" "Ventana $WM_CLASS movida al Workspace $_EFF_WS." 2>/dev/null || true
     fi
-    hyprctl dispatch focuswindow "class:$WM_CLASS" &>/dev/null || true
-    if [ "${_EFF_MODE:-multi}" = "single" ]; then
-        # Float BEFORE fullscreen: fullscreen works on tiled windows too, but
-        # only a floating window keeps a free-form geometry to fall back to
-        # when the user later un-fullscreens (Hyprland fullscreen keybind) —
-        # that's what makes the window draggable/resizable across monitors.
-        # `fullscreen` (classic dispatcher) has no window-selector arg — it
-        # acts on the currently focused window, which is why focuswindow runs
-        # first (shared above). Mode "0" = true edge-to-edge fullscreen
-        # (confirmed live); "1" is maximize-with-gaps, NOT what we want.
-        hyprctl dispatch setfloating "class:$WM_CLASS" &>/dev/null || true
-        log_event "INFO" "Ventana $WM_CLASS floating (drag/resize entre monitores)." 2>/dev/null || true
-        if [ -n "${_SINGLE_W:-}" ] && [ -n "${_SINGLE_H:-}" ]; then
-            # MONITOR_<id> capped the canvas below the monitor's real size —
-            # an EXACT resize (not `fullscreen`, which always fills the WHOLE
-            # monitor and would silently override the cap) positioned at the
-            # monitor's origin, same idiom as span mode's exact resize+move.
-            hyprctl dispatch resizewindowpixel "exact ${_SINGLE_W} ${_SINGLE_H},class:$WM_CLASS" &>/dev/null || true
-            hyprctl dispatch movewindowpixel "exact ${_SINGLE_X:-0} ${_SINGLE_Y:-0},class:$WM_CLASS" &>/dev/null || true
-            log_event "INFO" "Ventana $WM_CLASS: canvas ${_SINGLE_W}x${_SINGLE_H} en MONITOR_ID=${MONITOR_ID:-}." 2>/dev/null || true
-        else
-            if [ -n "${_SINGLE_X:-}" ] && [ -n "${_SINGLE_Y:-}" ]; then
-                hyprctl dispatch movewindowpixel "exact ${_SINGLE_X} ${_SINGLE_Y},class:$WM_CLASS" &>/dev/null || true
-                log_event "INFO" "Ventana $WM_CLASS movida a MONITOR_ID=${MONITOR_ID:-}." 2>/dev/null || true
-            fi
-            hyprctl dispatch fullscreen "0" &>/dev/null || true
-            log_event "INFO" "Ventana $WM_CLASS fullscreen (single-mon)." 2>/dev/null || true
-        fi
-        # SETTLE RETRY (same defensive pattern as span — see the span
-        # branch's comment for the confirmed mechanism): re-apply the
-        # workspace move + position (+ fullscreen, unless MONITOR_<id>
-        # capped the canvas) a couple of times after a short delay, in case
-        # the window wasn't fully settled (floating conversion, workspace
-        # membership) when the FIRST dispatch pass fired. Idempotent —
-        # harmless if the first pass already stuck.
-        if [ -n "${_SINGLE_X:-}" ] && [ -n "${_SINGLE_Y:-}" ]; then
-            for _single_retry_delay in 1 1.5; do
-                sleep "$_single_retry_delay"
-                [ -n "${_EFF_WS:-}" ] && hyprctl dispatch movetoworkspacesilent "$_EFF_WS,class:$WM_CLASS" &>/dev/null || true
-                if [ -n "${_SINGLE_W:-}" ] && [ -n "${_SINGLE_H:-}" ]; then
-                    hyprctl dispatch resizewindowpixel "exact ${_SINGLE_W} ${_SINGLE_H},class:$WM_CLASS" &>/dev/null || true
-                    hyprctl dispatch movewindowpixel "exact ${_SINGLE_X} ${_SINGLE_Y},class:$WM_CLASS" &>/dev/null || true
-                else
-                    hyprctl dispatch movewindowpixel "exact ${_SINGLE_X} ${_SINGLE_Y},class:$WM_CLASS" &>/dev/null || true
-                    hyprctl dispatch fullscreen "0" &>/dev/null || true
+    dispatch_focus
+    if [ "${COMPOSITOR:-}" = "hypr" ]; then
+        if [ "${_EFF_MODE:-multi}" = "single" ]; then
+            # Float BEFORE fullscreen: fullscreen works on tiled windows too, but
+            # only a floating window keeps a free-form geometry to fall back to
+            # when the user later un-fullscreens (Hyprland fullscreen keybind) —
+            # that's what makes the window draggable/resizable across monitors.
+            # `fullscreen` (classic dispatcher) has no window-selector arg — it
+            # acts on the currently focused window, which is why focuswindow runs
+            # first (shared above). Mode "0" = true edge-to-edge fullscreen
+            # (confirmed live); "1" is maximize-with-gaps, NOT what we want.
+            dispatch_float
+            log_event "INFO" "Ventana $WM_CLASS floating (drag/resize entre monitores)." 2>/dev/null || true
+            if [ -n "${_SINGLE_W:-}" ] && [ -n "${_SINGLE_H:-}" ]; then
+                # MONITOR_<id> capped the canvas below the monitor's real size —
+                # an EXACT resize (not `fullscreen`, which always fills the WHOLE
+                # monitor and would silently override the cap) positioned at the
+                # monitor's origin, same idiom as span mode's exact resize+move.
+                dispatch_resize "$_SINGLE_W" "$_SINGLE_H"
+                dispatch_move "${_SINGLE_X:-0}" "${_SINGLE_Y:-0}"
+                log_event "INFO" "Ventana $WM_CLASS: canvas ${_SINGLE_W}x${_SINGLE_H} en MONITOR_ID=${MONITOR_ID:-}." 2>/dev/null || true
+            else
+                if [ -n "${_SINGLE_X:-}" ] && [ -n "${_SINGLE_Y:-}" ]; then
+                    dispatch_move "$_SINGLE_X" "$_SINGLE_Y"
+                    log_event "INFO" "Ventana $WM_CLASS movida a MONITOR_ID=${MONITOR_ID:-}." 2>/dev/null || true
                 fi
+                dispatch_fullscreen
+                log_event "INFO" "Ventana $WM_CLASS fullscreen (single-mon)." 2>/dev/null || true
+            fi
+            # SETTLE RETRY (same defensive pattern as span — see the span
+            # branch's comment for the confirmed mechanism): re-apply the
+            # workspace move + position (+ fullscreen, unless MONITOR_<id>
+            # capped the canvas) a couple of times after a short delay, in case
+            # the window wasn't fully settled (floating conversion, workspace
+            # membership) when the FIRST dispatch pass fired. Idempotent —
+            # harmless if the first pass already stuck.
+            if [ -n "${_SINGLE_X:-}" ] && [ -n "${_SINGLE_Y:-}" ]; then
+                for _single_retry_delay in 1 1.5; do
+                    sleep "$_single_retry_delay"
+                    if [ -n "${_EFF_WS:-}" ]; then
+                        dispatch_move_to_ws "$_EFF_WS"
+                    fi
+                    if [ -n "${_SINGLE_W:-}" ] && [ -n "${_SINGLE_H:-}" ]; then
+                        dispatch_resize "$_SINGLE_W" "$_SINGLE_H"
+                        dispatch_move "${_SINGLE_X:-0}" "${_SINGLE_Y:-0}"
+                    else
+                        dispatch_move "${_SINGLE_X:-0}" "${_SINGLE_Y:-0}"
+                        dispatch_fullscreen
+                    fi
+                done
+                unset _single_retry_delay
+                log_event "INFO" "Ventana $WM_CLASS single-mon: geometría re-aplicada tras settle (t+2.5s)." 2>/dev/null || true
+            fi
+        elif [ "${_EFF_MODE:-multi}" = "span" ]; then
+            # Position the /size:-matched window at the spanned monitors' origin.
+            # noborder/noblur/noshadow (perf on modest hardware) are NOT applied
+            # — `hyprctl setprop` returned "unknown request" for every property
+            # name tried against this build; dropped rather than ship dead calls.
+            dispatch_float
+            dispatch_resize "${_SPAN_W:-0}" "${_SPAN_H:-0}"
+            dispatch_move "${_SPAN_X:-0}" "${_SPAN_Y:-0}"
+            log_event "INFO" "Ventana $WM_CLASS spanning: floating en (${_SPAN_X:-0},${_SPAN_Y:-0}) tamaño ${_SPAN_W:-0}x${_SPAN_H:-0}." 2>/dev/null || true
+            # SETTLE RETRY: xfreerdp3 renegocia su propia resolución justo
+            # después de completar el handshake RDP (post-connect negotiation),
+            # lo que PISA el resize/move de arriba si llegó demasiado temprano
+            # — confirmado en vivo con `set -x` (la ventana "se achica" a tamaño
+            # single-monitor apenas termina de conectar). Re-aplicamos el mismo
+            # resize+move un par de veces después de que ese settle ya pasó; son
+            # comandos idempotentes, repetirlos no tiene costo si no hiciera falta.
+            for _span_retry_delay in 1.5 2; do
+                sleep "$_span_retry_delay"
+                dispatch_resize "${_SPAN_W:-0}" "${_SPAN_H:-0}"
+                dispatch_move "${_SPAN_X:-0}" "${_SPAN_Y:-0}"
             done
-            unset _single_retry_delay
-            log_event "INFO" "Ventana $WM_CLASS single-mon: geometría re-aplicada tras settle (t+2.5s)." 2>/dev/null || true
+            unset _span_retry_delay
+            log_event "INFO" "Ventana $WM_CLASS spanning: geometría re-aplicada tras settle (t+3.5s)." 2>/dev/null || true
+        elif [ "${_EFF_MODE:-multi}" = "multi" ]; then
+            # /multimon already negotiates the correct WINDOW SIZE from the
+            # /monitors:<ids> it was given — no resize dispatch needed here, just
+            # float it (so it's not confined to Hyprland's tiling layout) and
+            # move it to the selected monitors' origin so it actually lands ON
+            # those physical outputs, instead of wherever the tiling layout put
+            # it (the "cramped" window this project's README documents).
+            dispatch_float
+            dispatch_move "${_MULTI_X:-0}" "${_MULTI_Y:-0}"
+            log_event "INFO" "Ventana $WM_CLASS multi-monitor: floating y posicionada en (${_MULTI_X:-0},${_MULTI_Y:-0})." 2>/dev/null || true
         fi
-    elif [ "${_EFF_MODE:-multi}" = "span" ]; then
-        # Position the /size:-matched window at the spanned monitors' origin.
-        # noborder/noblur/noshadow (perf on modest hardware) are NOT applied
-        # — `hyprctl setprop` returned "unknown request" for every property
-        # name tried against this build; dropped rather than ship dead calls.
-        hyprctl dispatch setfloating "class:$WM_CLASS" &>/dev/null || true
-        hyprctl dispatch resizewindowpixel "exact ${_SPAN_W:-0} ${_SPAN_H:-0},class:$WM_CLASS" &>/dev/null || true
-        hyprctl dispatch movewindowpixel "exact ${_SPAN_X:-0} ${_SPAN_Y:-0},class:$WM_CLASS" &>/dev/null || true
-        log_event "INFO" "Ventana $WM_CLASS spanning: floating en (${_SPAN_X:-0},${_SPAN_Y:-0}) tamaño ${_SPAN_W:-0}x${_SPAN_H:-0}." 2>/dev/null || true
-        # SETTLE RETRY: xfreerdp3 renegocia su propia resolución justo
-        # después de completar el handshake RDP (post-connect negotiation),
-        # lo que PISA el resize/move de arriba si llegó demasiado temprano
-        # — confirmado en vivo con `set -x` (la ventana "se achica" a tamaño
-        # single-monitor apenas termina de conectar). Re-aplicamos el mismo
-        # resize+move un par de veces después de que ese settle ya pasó; son
-        # comandos idempotentes, repetirlos no tiene costo si no hiciera falta.
-        for _span_retry_delay in 1.5 2; do
-            sleep "$_span_retry_delay"
-            hyprctl dispatch resizewindowpixel "exact ${_SPAN_W:-0} ${_SPAN_H:-0},class:$WM_CLASS" &>/dev/null || true
-            hyprctl dispatch movewindowpixel "exact ${_SPAN_X:-0} ${_SPAN_Y:-0},class:$WM_CLASS" &>/dev/null || true
-        done
-        unset _span_retry_delay
-        log_event "INFO" "Ventana $WM_CLASS spanning: geometría re-aplicada tras settle (t+3.5s)." 2>/dev/null || true
-    elif [ "${_EFF_MODE:-multi}" = "multi" ]; then
-        # /multimon already negotiates the correct WINDOW SIZE from the
-        # /monitors:<ids> it was given — no resize dispatch needed here, just
-        # float it (so it's not confined to Hyprland's tiling layout) and
-        # move it to the selected monitors' origin so it actually lands ON
-        # those physical outputs, instead of wherever the tiling layout put
-        # it (the "cramped" window this project's README documents).
-        hyprctl dispatch setfloating "class:$WM_CLASS" &>/dev/null || true
-        hyprctl dispatch movewindowpixel "exact ${_MULTI_X:-0} ${_MULTI_Y:-0},class:$WM_CLASS" &>/dev/null || true
-        log_event "INFO" "Ventana $WM_CLASS multi-monitor: floating y posicionada en (${_MULTI_X:-0},${_MULTI_Y:-0})." 2>/dev/null || true
+    else
+        # niri: geometry (float/resize/move/fullscreen) waits on the D8 live
+        # gate (PR3 task 3.1: move-floating-window abs-vs-delta, coordinate
+        # space, XWayland app_id↔/wm-class). Workspace pin + focus above are
+        # live-verified and already applied; positioning is NOT fired on
+        # unverified semantics — WARN, never silent breakage.
+        log_event "WARN" "Ventana $WM_CLASS: geometría (float/resize/move/fullscreen) pospuesta bajo niri (gate D8, PR3); workspace y focus aplicados." 2>/dev/null || true
     fi
 ) &
+fi  # end COMPOSITOR != none (D9: no dispatcher subshell under none)
 
 export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
 export LIBVA_DRIVER_NAME=iHD

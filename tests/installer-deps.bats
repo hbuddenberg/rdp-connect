@@ -42,6 +42,11 @@ TRUTH_TABLE=(
     "rofi|rofi|rofi|rofi"
     "hyprctl|hyprland|hyprland|hyprland"
     "shellcheck|shellcheck|shellcheck|shellcheck"
+    # compositor-aware PR2: niri CLI mapping. Arch extra carries `niri`;
+    # NOT packaged on Debian/Fedora main — empty there is INTENTIONAL (the
+    # installer's compositor OR-pair treats an empty mapping as
+    # "uninstallable" and warns; see installer-backends.bats).
+    "niri|niri||"
 )
 
 @test "pkg_for_pacman_xfreerdp3_returns_freerdp_not_freerdp3" {

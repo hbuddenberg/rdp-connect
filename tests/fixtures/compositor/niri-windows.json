@@ -1,0 +1,22 @@
+[
+  {
+    "id": 42,
+    "title": "ti-partner - Remote Desktop",
+    "app_id": "rdp-test",
+    "pid": 1234,
+    "workspace_id": 6,
+    "is_floating": false,
+    "is_focused": true,
+    "layout": { "x": 0, "y": 0, "width": 1920, "height": 1080 }
+  },
+  {
+    "id": 7,
+    "title": "foot",
+    "app_id": "foot",
+    "pid": 1300,
+    "workspace_id": 2,
+    "is_floating": false,
+    "is_focused": false,
+    "layout": { "x": 1920, "y": 0, "width": 800, "height": 600 }
+  }
+]

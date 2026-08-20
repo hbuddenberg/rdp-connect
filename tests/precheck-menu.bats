@@ -62,7 +62,9 @@ _precheck_block() {
 @test "engine_precheck_menu_excludes_monitors_with_empty_description" {
   # Virtual/headless outputs (e.g. this host's hypr-rdp server output) report
   # description="" and must never appear as a selectable "monitor" line.
-  run bash -c "$(declare -f _precheck_block); REPO_ROOT='${REPO_ROOT}' _precheck_block | grep -cF 'select((.description'"
+  # (compositor-aware PR2: the menu reads the CANONICAL monitor model —
+  # `.desc` — from get_monitors_json instead of raw hyprctl JSON.)
+  run bash -c "$(declare -f _precheck_block); REPO_ROOT='${REPO_ROOT}' _precheck_block | grep -cF 'select((.desc //'"
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "precheck menu does not filter out empty-description outputs"
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
-# tests/hyprland-api.bats — covers the hyprctl dispatch calls used for
-# post-launch window management (positioning, floating, fullscreen).
+# tests/hyprland-api.bats — structural backstop for the hyprctl dispatch
+# forms used for post-launch window management (positioning, floating,
+# fullscreen).
 #
 # CORRECTED (was wrong from the original baseline-hardening change onward):
 # Hyprland 0.55+ added an OPTIONAL Lua config manager (`hl.dsp.*` via
@@ -14,13 +15,16 @@
 #   - `hyprctl dispatch movewindowpixel "exact 1920 0,class:rdp-ti-partner"` -> "ok",
 #     confirmed via `hyprctl clients -j` (window actually moved)
 #
-# This file is the structural backstop: it asserts the engine uses the
-# classic dispatcher forms and contains NO `hl.dsp.*`/`hyprctl eval` calls.
-# Real compositor execution stays manual-verify for anything beyond what was
-# directly confirmed above (this project's established convention for
-# hyprctl calls — see README).
+# RETARGETED in compositor-aware PR2: the engine's launch-path dispatch now
+# goes through the lib wrappers (lib/rdp-common.bash::_hypr_dispatch call
+# sites), so the classic-form assertions grep the LIB — the emitted hyprctl
+# argv is byte-identical and additionally regression-locked by
+# compositor-backends.bats::dispatch_golden_argv_hypr_forms. The engine's
+# remaining raw classic forms (the PR3-pending --expand block) are covered
+# by expand-mode.bats and allowlisted in niri-api.bats. The negative
+# assertions (no Lua hl.dsp.*, no hyprctl eval/keyword) scan BOTH files.
 #
-# Confirmed dispatcher forms:
+# Confirmed dispatcher forms (asserted against the lib):
 #   focus peer window      : hyprctl dispatch focuswindow "class:..."
 #   move to workspace      : hyprctl dispatch movetoworkspacesilent "<ws>,class:..."
 #   float (force on)       : hyprctl dispatch setfloating "class:..."
@@ -36,70 +40,85 @@
 
 load test_helper
 
-@test "engine_uses_classic_focuswindow_dispatcher" {
-  local engine="${REPO_ROOT}/engine/rdp-connect"
-  [ -f "$engine" ] || fail "engine missing at $engine"
-  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'dispatch focuswindow'"
+@test "lib_uses_classic_focuswindow_dispatcher" {
+  local lib="${LIB_FILE}"
+  [ -f "$lib" ] || fail "lib missing at $lib"
+  run bash -c "grep -vE '^[[:space:]]*#' '$lib' | grep -cF 'dispatch focuswindow'"
   [ "$status" -eq 0 ] || fail "grep failed"
-  [ "$output" != "0" ] || fail "classic focuswindow dispatcher missing"
+  [ "$output" != "0" ] || fail "classic focuswindow dispatcher missing from lib _hypr_dispatch site"
 }
 
-@test "engine_uses_classic_fullscreen_dispatcher_for_single_mode" {
-  local engine="${REPO_ROOT}/engine/rdp-connect"
-  [ -f "$engine" ] || fail "engine missing at $engine"
-  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'dispatch fullscreen \"0\"'"
+@test "lib_uses_classic_fullscreen_dispatcher_for_single_mode" {
+  local lib="${LIB_FILE}"
+  [ -f "$lib" ] || fail "lib missing at $lib"
+  run bash -c "grep -vE '^[[:space:]]*#' '$lib' | grep -cF 'dispatch fullscreen \"0\"'"
   [ "$status" -eq 0 ] || fail "grep failed"
-  [ "$output" != "0" ] || fail "classic fullscreen dispatcher (mode 0) missing (single-mode auto-fullscreen)"
+  [ "$output" != "0" ] || fail "classic fullscreen dispatcher (mode 0) missing from lib (single-mode auto-fullscreen)"
 }
 
-@test "engine_uses_classic_setfloating_dispatcher" {
-  local engine="${REPO_ROOT}/engine/rdp-connect"
-  [ -f "$engine" ] || fail "engine missing at $engine"
-  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'dispatch setfloating'"
+@test "lib_uses_classic_setfloating_dispatcher" {
+  local lib="${LIB_FILE}"
+  [ -f "$lib" ] || fail "lib missing at $lib"
+  run bash -c "grep -vE '^[[:space:]]*#' '$lib' | grep -cF 'dispatch setfloating'"
   [ "$status" -eq 0 ] || fail "grep failed"
-  [ "$output" != "0" ] || fail "classic setfloating dispatcher missing"
+  [ "$output" != "0" ] || fail "classic setfloating dispatcher missing from lib _hypr_dispatch site"
 }
 
-@test "engine_uses_classic_exact_pixel_move_and_resize_for_span_mode" {
-  local engine="${REPO_ROOT}/engine/rdp-connect"
-  [ -f "$engine" ] || fail "engine missing at $engine"
-  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'dispatch movewindowpixel'"
+@test "lib_uses_classic_exact_pixel_move_and_resize_for_span_mode" {
+  local lib="${LIB_FILE}"
+  [ -f "$lib" ] || fail "lib missing at $lib"
+  run bash -c "grep -vE '^[[:space:]]*#' '$lib' | grep -cF 'dispatch movewindowpixel'"
   [ "$status" -eq 0 ] || fail "grep failed"
-  [ "$output" != "0" ] || fail "classic movewindowpixel dispatcher missing (span/multi/expand positioning)"
-  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'dispatch resizewindowpixel'"
+  [ "$output" != "0" ] || fail "classic movewindowpixel dispatcher missing from lib (span/multi/expand positioning)"
+  run bash -c "grep -vE '^[[:space:]]*#' '$lib' | grep -cF 'dispatch resizewindowpixel'"
   [ "$status" -eq 0 ] || fail "grep failed"
-  [ "$output" != "0" ] || fail "classic resizewindowpixel dispatcher missing (span/expand sizing)"
+  [ "$output" != "0" ] || fail "classic resizewindowpixel dispatcher missing from lib (span/expand sizing)"
 }
 
-@test "engine_uses_classic_move_to_workspace_dispatcher" {
-  local engine="${REPO_ROOT}/engine/rdp-connect"
-  [ -f "$engine" ] || fail "engine missing at $engine"
-  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'dispatch movetoworkspacesilent'"
+@test "lib_uses_classic_move_to_workspace_dispatcher" {
+  local lib="${LIB_FILE}"
+  [ -f "$lib" ] || fail "lib missing at $lib"
+  run bash -c "grep -vE '^[[:space:]]*#' '$lib' | grep -cF 'dispatch movetoworkspacesilent'"
   [ "$status" -eq 0 ] || fail "grep failed"
-  [ "$output" != "0" ] || fail "classic movetoworkspacesilent dispatcher missing (PREFERRED_WS assignment)"
+  [ "$output" != "0" ] || fail "classic movetoworkspacesilent dispatcher missing from lib (PREFERRED_WS assignment)"
 }
 
-@test "engine_does_not_use_lua_hl_dsp_api" {
+@test "engine_and_lib_do_not_use_lua_hl_dsp_api" {
   local engine="${REPO_ROOT}/engine/rdp-connect"
+  local lib="${LIB_FILE}"
   [ -f "$engine" ] || fail "engine missing at $engine"
+  [ -f "$lib" ] || fail "lib missing at $lib"
   # hl.dsp.* / hyprctl eval only work with the OPTIONAL Lua config manager —
   # confirmed NOT active here ("Invalid dispatcher" / "eval is only
-  # supported with the lua config manager"). Must never reappear in CODE.
+  # supported with the lua config manager"). Must never reappear in CODE,
+  # in the engine OR the lib backend layer.
   run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'hl.dsp.'"
-  [ "$status" -ne 0 ] || fail "Lua hl.dsp.* call present in CODE — confirmed non-functional on this project's target (classic config)"
+  [ "$status" -ne 0 ] || fail "Lua hl.dsp.* call present in ENGINE CODE — confirmed non-functional on this project's target (classic config)"
   assert_output "0"
   run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'hyprctl eval'"
-  [ "$status" -ne 0 ] || fail "'hyprctl eval' present in CODE — confirmed non-functional on this project's target (classic config)"
+  [ "$status" -ne 0 ] || fail "'hyprctl eval' present in ENGINE CODE — confirmed non-functional on this project's target (classic config)"
+  assert_output "0"
+  run bash -c "grep -vE '^[[:space:]]*#' '$lib' | grep -cF 'hl.dsp.'"
+  [ "$status" -ne 0 ] || fail "Lua hl.dsp.* call present in LIB CODE"
+  assert_output "0"
+  run bash -c "grep -vE '^[[:space:]]*#' '$lib' | grep -cF 'hyprctl eval'"
+  [ "$status" -ne 0 ] || fail "'hyprctl eval' present in LIB CODE"
   assert_output "0"
 }
 
-@test "engine_does_not_use_deprecated_hyprctl_keyword" {
+@test "engine_and_lib_do_not_use_deprecated_hyprctl_keyword" {
   local engine="${REPO_ROOT}/engine/rdp-connect"
+  local lib="${LIB_FILE}"
   [ -f "$engine" ] || fail "engine missing at $engine"
+  [ -f "$lib" ] || fail "lib missing at $lib"
   # `hyprctl keyword` is unrelated to dispatch (it's for reloading config
   # keywords at runtime) and was never needed by this engine — kept as a
-  # regression guard from the original baseline-hardening change.
+  # regression guard from the original baseline-hardening change, now
+  # scanning the lib backend layer too.
   run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'hyprctl keyword'"
-  [ "$status" -ne 0 ] || fail "deprecated 'hyprctl keyword' still in CODE"
+  [ "$status" -ne 0 ] || fail "deprecated 'hyprctl keyword' still in ENGINE CODE"
+  assert_output "0"
+  run bash -c "grep -vE '^[[:space:]]*#' '$lib' | grep -cF 'hyprctl keyword'"
+  [ "$status" -ne 0 ] || fail "deprecated 'hyprctl keyword' still in LIB CODE"
   assert_output "0"
 }

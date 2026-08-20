@@ -19,15 +19,19 @@
 
 load test_helper
 
-# Fixture matching a real `hyprctl monitors -j` shape (id, name, description),
-# INCLUDING a headless/virtual output with an empty description (like the
-# hypr-rdp virtual monitor on this host) to prove an empty-description
-# monitor never spuriously matches a substring token.
+# Fixture in the CANONICAL monitor-model shape (compositor-aware task 2.4
+# migration): {id, desc, x, y, w, h, scale, ws_ref} — the shape
+# get_monitors_json() emits for every backend and the only shape the engine
+# feeds resolve_monitor_order since PR2. `id` is numeric here (hypr); niri
+# name-ids are covered by niri-api.bats::resolve_monitor_order_supports_niri_name_ids.
+# Includes a headless/virtual output with an empty desc (like the hypr-rdp
+# virtual monitor on this host) to prove an empty-desc monitor never
+# spuriously matches a substring token.
 _FIXTURE_MONITORS_JSON='[
-  {"id":0,"name":"DP-3","description":"Dell Inc. DELL U2417H XVNNT6BTAPBL"},
-  {"id":1,"name":"DP-5","description":"Dell Inc. DELL U2417H J75VK884B7ZL"},
-  {"id":2,"name":"DP-6","description":"ASUSTek COMPUTER INC XG27ACS T6LMTF111342"},
-  {"id":3,"name":"hypr-rdp","description":""}
+  {"id":0,"desc":"Dell Inc. DELL U2417H XVNNT6BTAPBL","x":0,"y":0,"w":1920,"h":1080,"scale":1.0,"ws_ref":1},
+  {"id":1,"desc":"Dell Inc. DELL U2417H J75VK884B7ZL","x":1920,"y":0,"w":1920,"h":1080,"scale":1.0,"ws_ref":2},
+  {"id":2,"desc":"ASUSTek COMPUTER INC XG27ACS T6LMTF111342","x":3840,"y":0,"w":2560,"h":1440,"scale":1.0,"ws_ref":3},
+  {"id":3,"desc":"","x":5760,"y":0,"w":1920,"h":1080,"scale":1.0,"ws_ref":null}
 ]'
 
 @test "resolve_monitor_order_passes_numeric_tokens_through_unchanged" {

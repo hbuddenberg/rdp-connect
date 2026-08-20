@@ -40,10 +40,13 @@ load test_helper
   [ -f "$engine" ] || fail "engine missing at $engine"
   # Sliced from the background dispatcher's multi branch to its own fi/elif
   # boundary, so this is specifically the multi-mode dispatch, not span's.
-  run bash -c "awk '/_EFF_MODE:-multi\\}\" = \"multi\"/,/^    fi\$/' '$engine' | grep -cF 'dispatch setfloating'"
+  # (compositor-aware PR2: float/move go through the lib wrappers; the
+  # emitted hyprctl argv is byte-identical — see the golden-argv test in
+  # compositor-backends.bats.)
+  run bash -c "awk '/_EFF_MODE:-multi\\}\" = \"multi\"/,/^    fi\$/' '$engine' | grep -cF 'dispatch_float'"
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "multi mode does not float the window"
-  run bash -c "awk '/_EFF_MODE:-multi\\}\" = \"multi\"/,/^    fi\$/' '$engine' | grep -cF 'dispatch movewindowpixel'"
+  run bash -c "awk '/_EFF_MODE:-multi\\}\" = \"multi\"/,/^    fi\$/' '$engine' | grep -cF 'dispatch_move'"
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "multi mode does not move the window to its monitors' origin"
 }

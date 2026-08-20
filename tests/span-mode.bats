@@ -122,7 +122,9 @@ load test_helper
   run bash -c "awk '/_EFF_MODE:-multi}\" = \"span\"/,/elif ._EFF_MODE/' '$engine' | grep -cF 'sleep'"
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "span's background dispatcher has no settle-retry sleep"
-  run bash -c "awk '/_EFF_MODE:-multi}\" = \"span\"/,/elif ._EFF_MODE/' '$engine' | grep -cF 'resizewindowpixel'"
+  # PR2: exact resize via the dispatch_resize wrapper (byte-identical
+  # resizewindowpixel argv — compositor-backends golden test).
+  run bash -c "awk '/_EFF_MODE:-multi}\" = \"span\"/,/elif ._EFF_MODE/' '$engine' | grep -cF 'dispatch_resize'"
   [ "$status" -eq 0 ] || fail "grep failed"
-  [ "$output" -ge 2 ] || fail "expected resizewindowpixel dispatched at least twice (initial + settle retry), found $output"
+  [ "$output" -ge 2 ] || fail "expected dispatch_resize at least twice (initial + settle retry), found $output"
 }

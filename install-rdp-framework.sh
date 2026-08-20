@@ -58,6 +58,7 @@ pkg_for() {
                 wofi)        printf '%s' wofi ;;
                 rofi)        printf '%s' rofi ;;
                 hyprctl)     printf '%s' hyprland ;;
+                niri)        printf '%s' niri ;;
                 shellcheck)  printf '%s' shellcheck ;;
             esac ;;
         apt)
@@ -89,7 +90,7 @@ pkg_for() {
 # F10 — Install missing dependencies
 # ---------------------------------------------------------------------------
 install_deps() {
-    local pkgr="$1" binary pkg
+    local pkgr="$1" binary pkg _cand
     local missing=()
 
     # Required binaries (hard deps)
@@ -106,17 +107,28 @@ install_deps() {
         missing+=("$(pkg_for "$pkgr" wofi)")
     fi
 
-    # hyprctl — hard requirement for the engine, but Debian main may not ship it.
-    # On apt: warn loudly but don't fail the install (defer to F6 require_cmd
-    # at engine startup). On pacman/dnf: install normally.
-    if ! command -v hyprctl &>/dev/null; then
+    # Compositor OR-check (compositor-aware change): the engine detects its
+    # compositor at runtime and runs under Hyprland OR niri — the dependency
+    # is satisfied when EITHER CLI is already present. When neither is:
+    #   - pacman/dnf: install the first compositor package the manager
+    #     actually carries (hyprland, else niri) via the normal missing list;
+    #   - apt: hyprland may not be in Debian main and niri is not packaged —
+    #     warn loudly but do NOT fail the install; the engine degrades to
+    #     the none mode at runtime (compositor-backends D9: /f, DPI 100%,
+    #     no workspace pinning or monitor menu).
+    if ! command -v hyprctl &>/dev/null && ! command -v niri &>/dev/null; then
         if [ "$pkgr" == "apt" ]; then
-            echo "⚠ WARNING: hyprctl (hyprland) is a HARD REQUIREMENT but may not be in Debian main."
-            echo "  Install it manually: sudo apt install hyprland"
-            echo "  (or build from source — see https://wiki.hyprland.org/)"
-            echo "  The engine will refuse to start (exit 127) if hyprctl is absent."
+            echo "⚠ WARNING: neither hyprctl (hyprland) nor niri found, and apt may not carry them."
+            echo "  Continuing in degraded none mode: /f fullscreen, DPI 100%, no workspace pinning or monitor menu."
+            echo "  Install one manually: sudo apt install hyprland  ·  niri: https://github.com/YaLTeR/niri"
         else
-            missing+=("$(pkg_for "$pkgr" hyprctl)")
+            _cand="$(pkg_for "$pkgr" hyprctl)"
+            [ -z "$_cand" ] && _cand="$(pkg_for "$pkgr" niri)"
+            if [ -n "$_cand" ]; then
+                missing+=("$_cand")
+            else
+                echo "⚠ WARNING: no compositor package (hyprland/niri) available from $pkgr — continuing in degraded none mode."
+            fi
         fi
     fi
 
@@ -239,11 +251,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         cat >&2 << 'UNSUPPORTED'
 ❌ Unsupported distribution. /etc/os-release did not match pacman/dnf/apt.
 
-Required binaries: xfreerdp3 jq flock notify-send wofi|rofi hyprctl
+Required binaries: xfreerdp3 jq flock notify-send wofi|rofi hyprctl|niri (one compositor CLI)
 
 Manual install commands for reference (run the one matching your distro):
 
-  pacman:  sudo pacman -S freerdp jq util-linux libnotify wofi hyprland shellcheck
+  pacman:  sudo pacman -S freerdp jq util-linux libnotify wofi hyprland shellcheck   # or: niri instead of hyprland
   apt:     sudo apt install freerdp3-x11 jq util-linux libnotify-bin wofi hyprland shellcheck
   dnf:     sudo dnf install freerdp jq util-linux libnotify wofi hyprland shellcheck
 

@@ -286,29 +286,79 @@ _hypr_clients_json()  { cat "${TESTS_DIR}/fixtures/compositor/hypr-clients.json"
 }
 
 # ============================================================================
-# Structural (spec: compositor-backends::hypr-owns-/scale; tasks 1.10 residue
-# — the niri argv-capture half of 1.10 is PR2)
+# Structural (spec: compositor-backends::hypr-owns-/scale; tasks 1.10/2.6)
+# — the two structural twins (/scale guard + niri action-form guard) moved
+# to tests/niri-api.bats in PR2, where the spec annotations name them.
 # ============================================================================
 
-@test "scale_conversion_only_in_hypr_adapter" {
-  local lib="${LIB_FILE}"
-  # Every division-by-.scale in the lib must live inside _monitors_hypr's
-  # body (reads like .[0].scale or logical.scale are not divisions — the
-  # regex demands a slash, optionally spaced, immediately before .scale).
-  local body first_line last_line match_line offending=""
-  body=$(awk '/^_monitors_hypr\(\) \{/,/^\}/' "$lib")
-  [ -n "$body" ] || fail "_monitors_hypr not found in lib"
-  first_line=$(grep -n '^_monitors_hypr() {' "$lib" | cut -d: -f1)
-  last_line=$((first_line + $(printf '%s\n' "$body" | grep -c '') - 1))
-  while IFS= read -r match_line; do
-    [ -z "$match_line" ] && continue
-    if [ "$match_line" -lt "$first_line" ] || [ "$match_line" -gt "$last_line" ]; then
-      offending="${offending}${match_line} "
-    fi
-  done < <(grep -nE '/[[:space:]]*\.scale' "$lib" | cut -d: -f1)
-  [ -z "$offending" ] || fail "/.scale division outside _monitors_hypr at lines: ${offending}"
-  # The conversion itself must EXIST in the adapter (w and h divisions).
-  [ "$(printf '%s\n' "$body" | grep -cE '/[[:space:]]*\.scale')" -ge 2 ]
+# ============================================================================
+# Degraded none backend — engine side (spec: compositor-backends::none-backend
+# + engine-robustness::require_cmd; tasks 2.1/2.2). RED until the PR2 engine
+# migration lands.
+# ============================================================================
+
+@test "none_mode_f_100pct" {
+  # Spec scenario "none mode builds /f at 100% DPI": canonical [] → monitor
+  # count collapses to one → build_mon_flags → /f; compute_dpi_flags lands
+  # in the existing 100% WARN path (get_dpi_scale prints nothing under
+  # none) with EXACTLY one WARN.
+  COMPOSITOR=none
+  unset DISABLE_DPI
+  local -a warn_lines=()
+  log_event() {
+    if [[ "$1" == "WARN" ]]; then warn_lines+=("$2"); fi
+  }
+  local canon count
+  canon=$(get_monitors_json)
+  [ "$(printf '%s' "$canon" | jq '. | length')" = "0" ]
+  # Engine-side (D9): count is forced to 1 under none before build_mon_flags.
+  count=1
+  build_mon_flags "$count" ""
+  [ "${MON_FLAGS[*]}" = "/f" ]
+  compute_dpi_flags
+  [ "${#DPI_FLAGS[@]}" = "0" ]
+  [ "$IS_HIDPI" = "0" ]
+  [ "$SCALE_PCT" = "100" ]
+  [ "${#warn_lines[@]}" = "1" ]
+}
+
+@test "none_mode_skips_compositor_require_cmd" {
+  # Spec engine-robustness: "No compositor CLI present no longer aborts at
+  # preflight" — the engine must not carry an UNCONDITIONAL compositor
+  # require_cmd; the compositor CLI check is detection-conditional (D7).
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  # No top-level unconditional compositor require_cmd in CODE.
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cE '^[[:space:]]*require_cmd (hyprctl|niri)[[:space:]]'"
+  [ "$status" -ne 0 ] || fail "grep rc semantics"
+  assert_output "0"
+  # The conditional (post-detection) forms exist for both backends.
+  grep -qF 'hypr) require_cmd hyprctl hyprland' "$engine" \
+    || fail "no detection-conditional require_cmd for hyprctl (D7)"
+  grep -qF 'niri) require_cmd niri niri' "$engine" \
+    || fail "no detection-conditional require_cmd for niri (D7)"
+}
+
+@test "none_mode_skips_menu_and_pin" {
+  # Spec scenario "none mode skips menu and pinning without abort":
+  # structural guards at the pre-connect menu site and the background
+  # dispatcher (ws pin) site — both must be none-guarded (D9; twin of the
+  # no-wofi skip precedent).
+  local engine="${REPO_ROOT}/engine/rdp-connect"
+  [ -f "$engine" ] || fail "engine missing at $engine"
+  # Menu site: the none guard rides the SAME if-condition as the
+  # mode-override + picker guards.
+  grep -qF 'if [ -z "${MONITOR_MODE_OVERRIDE:-}" ] && [ "${COMPOSITOR:-}" != "none" ]' "$engine" \
+    || fail "pre-connect menu is not none-guarded"
+  # Background dispatcher (ws pin + geometry): the whole subshell is
+  # skipped under none — the guard must exist at least twice in CODE
+  # (menu + dispatcher).
+  local guards
+  guards=$(grep -vE '^[[:space:]]*#' "$engine" | grep -cF '[ "${COMPOSITOR:-}" != "none" ]')
+  [ "$guards" -ge 2 ] || fail "expected >=2 none guards in CODE (menu + dispatcher), found $guards"
+  # And the dispatcher poll is compositor-neutral (wrapper, not raw hyprctl).
+  grep -qF 'compositor_find_window "$WM_CLASS"' "$engine" \
+    || fail "dispatcher window poll does not use compositor_find_window"
 }
 
 # ============================================================================
@@ -443,15 +493,6 @@ _hypr_clients_json()  { cat "${TESTS_DIR}/fixtures/compositor/hypr-clients.json"
   [ "$output" = "SURVIVED" ]
 }
 
-@test "niri_action_forms_static_guard" {
-  # tasks 1.10 structural residue (the argv-capture half is PR2): the lib
-  # must carry the live-verified niri action forms and contain NO eval —
-  # compositor strings only ever travel as quoted argv tokens / jq --arg.
-  local lib="${LIB_FILE}"
-  grep -qF 'move-window-to-workspace "$ws" --window-id "$_WIN_TOKEN"' "$lib" \
-    || fail "workspace move must use the --window-id flag form (live-verified; --id is wrong)"
-  grep -qF 'focus-workspace "$ws"' "$lib" || fail "workspace move must also focus the target workspace"
-  run grep -nE '\beval [^ ]' "$lib"
-  [ "$status" -ne 0 ] || fail "eval must never appear in the lib: $output"
-}
+# (niri_action_forms_static_guard moved to tests/niri-api.bats in PR2 — the
+# spec annotations name niri-api.bats as the structural-twin home.)
 

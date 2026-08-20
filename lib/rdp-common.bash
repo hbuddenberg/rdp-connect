@@ -440,17 +440,25 @@ build_clipboard_flags() {
 }
 
 # ---------------------------------------------------------------------------
-# F9 — resolve_monitor_order: MONITOR_ORDER by numeric id OR description
+# F9 — resolve_monitor_order: MONITOR_ORDER by stable id token OR description
 # ---------------------------------------------------------------------------
 # resolve_monitor_order <monitors_json> <selector>
 #
 # <selector> is a comma-separated list of tokens, same shape as
-# MONITOR_ORDER/--monitor-order. Each token is EITHER a numeric hyprctl id
-# (passed through unchanged) OR a case-insensitive substring matched against
-# each monitor's `.description` (e.g. "Dell Inc. DELL U2417H XVNNT6BTAPBL") —
-# port names/ids renumber across a reboot or replug (confirmed on real
-# hardware: the same 3 monitors enumerated as DP-4/DP-9/DP-8 one session and
-# DP-3/DP-5/DP-6 the next), description does not.
+# MONITOR_ORDER/--monitor-order. Each token is EITHER a stable monitor id
+# token (numeric for hypr — passed through unchanged; an output NAME for
+# niri, e.g. "DP-2") OR a case-insensitive substring matched against each
+# monitor's description field — port names/ids renumber across a reboot or
+# replug (confirmed on real hardware: the same 3 monitors enumerated as
+# DP-4/DP-9/DP-8 one session and DP-3/DP-5/DP-6 the next), description
+# does not.
+#
+# Input shape (compositor-aware PR2): <monitors_json> is normally the
+# CANONICAL monitor model from get_monitors_json() — description lives in
+# `.desc`. The `.description` fallback keeps raw `hyprctl monitors -j`
+# callers working (the engine's --expand block stays raw until PR3; its
+# call site is allowlisted by niri-api.bats::no_raw_compositor_ipc_in_engine
+# and PR3 drops this fallback).
 #
 # Prints the resolved comma-separated id list on stdout, preserving the
 # selector's original token order. Returns 1 (diagnostic on stderr, no
@@ -467,14 +475,23 @@ resolve_monitor_order() {
     tok="${tok%"${tok##*[![:space:]]}"}"   # trim trailing whitespace
     [ -z "$tok" ] && continue
     if [[ "$tok" =~ ^[0-9]+$ ]]; then
+      # Hypr numeric id: verbatim passthrough (unchanged hypr semantics —
+      # spec compositor-backends::hypr-owns-/scale).
       resolved+=("$tok")
       continue
     fi
-    id_matches=$(printf '%s' "$mon_json" | jq -r --arg q "$tok" \
-      '[.[] | select((.description // "") != "" and ((.description | ascii_downcase) | contains($q | ascii_downcase)))] | .[].id' 2>/dev/null)
+    # D3 token match: EXACT id equality first (string compare — niri output
+    # names like "DP-2" resolve to themselves; a numeric-looking hypr id in
+    # a mixed selector was already handled above), then description
+    # substring as the fallback.
+    id_matches=$(printf '%s' "$mon_json" | jq -r --arg q "$tok" '
+      [.[] | select((.id | tostring) == $q) | .id] as $exact
+      | if ($exact | length) > 0 then $exact[]
+        else [.[] | select(((.desc // .description) // "") != "" and (((.desc // .description) | ascii_downcase) | contains($q | ascii_downcase))) | .id][]
+        end' 2>/dev/null)
     count=$(printf '%s' "$id_matches" | grep -c . || true)
     if [ "$count" -ne 1 ]; then
-      printf 'resolve_monitor_order: "%s" matched %d monitor(s) via description (need exactly 1)\n' "$tok" "$count" >&2
+      printf 'resolve_monitor_order: "%s" matched %d monitor(s) via id/description (need exactly 1)\n' "$tok" "$count" >&2
       return 1
     fi
     resolved+=("$id_matches")
@@ -599,22 +616,31 @@ append_tunables_block() {
 
 # --- rdp-connect tunables (added by `rdp-connect --update-profiles`; all optional) ---
 # Precedence: CLI flag > these > computed default. Uncomment & set what you need.
-# MONITOR_<id> is 0-based (matches `hyprctl monitors` ids); per-monitor resolution
-# is only honored in single mode (FreeRDP /multimon uses native res per monitor).
+# Monitor/workspace tokens are compositor-dependent (compositor-aware change):
+#   Hyprland: MONITOR_ID/MONITOR_ORDER numeric ids are 0-based `hyprctl
+#             monitors` DETECTION-order ids — they renumber across reboots;
+#             prefer a description substring (identical models disambiguate
+#             ONLY by serial).
+#   Niri:     the monitor token is the output NAME (e.g. DP-2 — stable
+#             across reboots); desc is "make model serial". PREFERRED_WS:
+#             named workspaces are the niri-idiomatic value (numeric indexes
+#             are per-output and ambiguous).
 # AUDIO_REDIRECT=1            # 1=redirect audio to client (default); 0=play on remote
 # MONITOR_MODE=multi          # multi (default) | single
-# MONITOR_ID=0                # single: which monitor (0-based hyprctl id)
+# MONITOR_ID=0                # single: which monitor (hypr: 0-based id · niri: output name, e.g. DP-2)
 # MONITORS=3                  # multi: use first N detected monitors
 # MONITOR_ORDER=1,3,2         # multi/span/expand: IDs in this order (-> /monitors:).
 #                             # Tokens may also be a description substring
-#                             # (hyprctl monitors -j .description, e.g. "ASUS" or
-#                             # a serial to disambiguate identical models) —
-#                             # survives port/id renumbering across reboots,
-#                             # unlike numeric IDs. Mix freely: "ASUS,0".
+#                             # (hypr: monitors -j .description · niri: make
+#                             # model serial — e.g. "ASUS" or a serial to
+#                             # disambiguate identical models) — survives
+#                             # port/id renumbering across reboots, unlike
+#                             # numeric IDs. Mix freely: "ASUS,0".
 # MONITOR_0=1920x1080         # single: resolution for monitor id 0
 # MONITOR_1=1920x1080
 # MONITOR_2=2560x1440
 # DYNAMIC_RESOLUTION=1        # single: windowed, res follows window (Win8.1+ server)
+# PREFERRED_WS=3              # workspace to pin the window to (niri: named ws idiomatic)
 # USB_REDIRECT=0              # 1=redirect USB device (opt-in); 0=off (default)
 # USB_DEVICE_IDS=0781:5580    # vid:pid[#vid:pid] hex (required when USB_REDIRECT=1)
 # DRIVE_REDIRECT=1            # 1=shared drive (default); 0=off

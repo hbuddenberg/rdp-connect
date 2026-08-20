@@ -125,7 +125,10 @@ load test_helper
   run bash -c "awk '/^    single\\)/,/^        ;;/' '$engine' | grep -cF '_EFF_WS='"
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "single mode does not override _EFF_WS from the target monitor's activeWorkspace"
-  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'movetoworkspacesilent \"\$_EFF_WS'"
+  # compositor-aware PR2: the dispatcher calls the lib wrapper; the emitted
+  # hyprctl argv (movetoworkspacesilent "<ws>,class:...") is byte-identical,
+  # locked by compositor-backends.bats::dispatch_golden_argv_hypr_forms.
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'dispatch_move_to_ws \"\$_EFF_WS\"'"
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "background dispatcher still moves to raw \$PREFERRED_WS instead of \$_EFF_WS"
 }
@@ -153,9 +156,11 @@ load test_helper
   # favor of an exact resizewindowpixel) whenever MONITOR_<id> capped the
   # canvas below the monitor's real size, or the cap would be silently
   # overridden on every dispatch pass (initial AND settle retry).
-  run bash -c "grep -A5 'silently override the cap' '$engine' | grep -cF 'resizewindowpixel'"
+  # (PR2: exact resize now via the lib wrapper — same argv, locked by the
+  # golden-argv test in compositor-backends.bats.)
+  run bash -c "grep -A5 'silently override the cap' '$engine' | grep -cF 'dispatch_resize'"
   [ "$status" -eq 0 ] || fail "grep failed"
-  [ "$output" != "0" ] || fail "capped-canvas branch does not use resizewindowpixel"
+  [ "$output" != "0" ] || fail "capped-canvas branch does not use exact resize (dispatch_resize)"
 }
 
 @test "engine_single_mode_re_dispatches_geometry_after_a_settle_delay" {
@@ -168,9 +173,10 @@ load test_helper
   run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -A20 'fullscreen (single-mon)' | grep -cF 'sleep'"
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "single mode has no settle-retry sleep after the initial dispatch"
-  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -A20 'fullscreen (single-mon)' | grep -cF 'movewindowpixel'"
+  # PR2: exact move now via the dispatch_move wrapper (byte-identical argv).
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -A20 'fullscreen (single-mon)' | grep -cF 'dispatch_move'"
   [ "$status" -eq 0 ] || fail "grep failed"
-  [ "$output" != "0" ] || fail "single mode does not re-dispatch movewindowpixel in the settle retry"
+  [ "$output" != "0" ] || fail "single mode does not re-dispatch the exact move in the settle retry"
 }
 
 @test "engine_single_mode_positions_window_on_MONITOR_ID_when_set" {
@@ -182,7 +188,9 @@ load test_helper
   run bash -c "awk '/^    single\\)/,/^        ;;/' '$engine' | grep -cF 'MONITOR_ID'"
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "single mode case arm does not consult MONITOR_ID"
-  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'movewindowpixel \"exact \${_SINGLE_X'"
+  # PR2: the dispatcher's exact move goes through dispatch_move (the wrapper
+  # emits the byte-identical `movewindowpixel "exact <x> <y>,class:..."`).
+  run bash -c "grep -vE '^[[:space:]]*#' '$engine' | grep -cF 'dispatch_move \"\$_SINGLE_X\"'"
   [ "$status" -eq 0 ] || fail "grep failed"
   [ "$output" != "0" ] || fail "background dispatcher does not move the window to _SINGLE_X/_SINGLE_Y"
 }

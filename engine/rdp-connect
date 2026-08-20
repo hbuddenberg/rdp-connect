@@ -647,10 +647,13 @@ if ! flock -n 200; then
         # Check if the peer process is actually dead
         if [ -n "$_peer" ] && ! kill -0 "$_peer" 2>/dev/null; then
             # Process is dead but lock is stuck - force cleanup
-            log_event "WARN" "Proceso $_peer muerto pero lock atascado. Limpiando forzosamente (intento $_retry/3)..."
-            # Close and reopen the fd to release any stale state
+            log_event "WARN" "Proceso $_peer muerto pero lock atascado. Reclamando lock (intento $_retry/3)..."
+            # R7 invariant (multi-peer-race): the PID file is NEVER unlinked.
+            # Closing the fd releases the kernel flock on process death; the
+            # stale inode is reclaimed atomically by the next flock -n on the
+            # SAME path. rm -f + recreate would let two peers lock different
+            # inodes (the original R7 race this engine fixed).
             exec 200>&-
-            rm -f "$PID_FILE"
             exec 200>"$PID_FILE"
             sleep 0.5
         else

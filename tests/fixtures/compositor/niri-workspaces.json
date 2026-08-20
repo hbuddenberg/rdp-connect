@@ -1,0 +1,14 @@
+[
+  { "id": 1, "idx": 1, "name": "mensajeria", "output": "DP-7", "is_urgent": false, "is_active": true, "is_focused": false, "active_window_id": 11 },
+  { "id": 3, "idx": 1, "name": "musica", "output": "DP-8", "is_urgent": false, "is_active": true, "is_focused": true, "active_window_id": 13 },
+  { "id": 5, "idx": 3, "name": "terminal", "output": "DP-8", "is_urgent": false, "is_active": false, "is_focused": false, "active_window_id": null },
+  { "id": 4, "idx": 2, "name": "correo", "output": "DP-8", "is_urgent": false, "is_active": false, "is_focused": false, "active_window_id": null },
+  { "id": 15, "idx": 2, "name": null, "output": "DP-7", "is_urgent": false, "is_active": false, "is_focused": false, "active_window_id": null },
+  { "id": 7, "idx": 2, "name": "scratchpad", "output": "DP-3", "is_urgent": false, "is_active": false, "is_focused": false, "active_window_id": 7 },
+  { "id": 2, "idx": 4, "name": "ai", "output": "DP-3", "is_urgent": false, "is_active": false, "is_focused": false, "active_window_id": null },
+  { "id": 14, "idx": 4, "name": null, "output": "DP-8", "is_urgent": false, "is_active": false, "is_focused": false, "active_window_id": null },
+  { "id": 13, "idx": 5, "name": null, "output": "DP-3", "is_urgent": false, "is_active": false, "is_focused": false, "active_window_id": null },
+  { "id": 8, "idx": 3, "name": "screen-share", "output": "DP-3", "is_urgent": false, "is_active": false, "is_focused": false, "active_window_id": null },
+  { "id": 6, "idx": 1, "name": "silencio", "output": "DP-3", "is_urgent": false, "is_active": true, "is_focused": false, "active_window_id": 5 },
+  { "id": 99, "idx": 9, "name": "libre", "output": null, "is_urgent": false, "is_active": false, "is_focused": false, "active_window_id": null }
+]

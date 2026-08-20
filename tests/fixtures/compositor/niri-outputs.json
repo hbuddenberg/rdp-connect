@@ -1,0 +1,47 @@
+{
+  "DP-3": {
+    "name": "DP-3",
+    "make": "Dell Inc.",
+    "model": "DELL U2417H",
+    "serial": "XVNNT6BTAPBL",
+    "scale": null,
+    "logical": {
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "scale": 2.0,
+      "transform": "Normal"
+    }
+  },
+  "DP-8": {
+    "name": "DP-8",
+    "make": "ASUSTek COMPUTER INC",
+    "model": "XG27ACS",
+    "serial": "T6LMTF111342",
+    "scale": null,
+    "logical": {
+      "x": 1920,
+      "y": 0,
+      "width": 2560,
+      "height": 1440,
+      "scale": 1.0,
+      "transform": "Normal"
+    }
+  },
+  "DP-7": {
+    "name": "DP-7",
+    "make": "Dell Inc.",
+    "model": "DELL U2417H",
+    "serial": "J75VK884B7ZL",
+    "scale": null,
+    "logical": {
+      "x": 4480,
+      "y": 0,
+      "width": 1920,
+      "height": 1080,
+      "scale": 1.0,
+      "transform": "Normal"
+    }
+  }
+}

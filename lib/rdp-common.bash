@@ -291,7 +291,7 @@ compute_dpi_flags() {
     return 0
   fi
   
-  out=$(hyprctl monitors -j 2>/dev/null | jq -r '
+  out=$(get_dpi_scale | jq -r '
       .[0].scale as $raw
     | (try ($raw | tonumber) catch null) as $n
     | if $n == null then "0\t100\tinvalid\t\($raw)"
@@ -621,4 +621,381 @@ append_tunables_block() {
 # SHARE_DIR=$HOME/Compartido  # local path shared to remote (default: $HOME/Compartido)
 # CLIPBOARD_SYNC=1            # 1=clipboard sync (default); 0=off
 EOF_TUNABLES_BLOCK
+}
+
+# ---------------------------------------------------------------------------
+# Compositor backend layer — compositor-aware change (design D1–D6)
+# ---------------------------------------------------------------------------
+# One canonical monitor model + dispatch wrappers for hyprland / niri and a
+# degraded `none` backend, so the engine can run under either compositor.
+# Invariants (spec compositor-backends + engine-security):
+#   - detection is PROBE-decided (env hints only ORDER candidates) and never
+#     aborts the engine; every compositor query degrades with WARN;
+#   - compositor-controlled strings enter jq ONLY via --arg; no eval;
+#   - this layer NEVER interposes between the password pipe and the
+#     xfreerdp3 argv (it is not part of the connection pipeline at all).
+
+# detect_compositor (D4)
+#
+# Sets COMPOSITOR ∈ {hypr, niri, none} and caches the winning probe's JSON in
+# _PROBE_JSON_HYPR / _PROBE_JSON_NIRI (consumed by the monitor adapters and
+# get_dpi_scale — ≤1 IPC per query type per run).
+#
+# Candidates are hint-ORDERED but probe-DECIDED: exit code alone never
+# decides, because BOTH CLIs answer rc=1 with plain text on the wrong
+# compositor (live-probed). The probe is connectivity + JSON-validity:
+#   timeout 2 hyprctl monitors -j | jq -e .
+#   timeout 2 niri msg --json outputs  | jq -e .
+# `timeout 2` bounds a hung socket; `jq -e .` rejects plain text; the rc is
+# captured in an `if` (pipefail-safe, no `|| true` on the probe). A missing
+# CLI is skipped via command -v.
+#
+# none → exactly ONE WARN naming the degraded mode, then return 0 — the
+# engine continues (spec: detection MUST NOT abort). The message text comes
+# from MSG_COMPOSITOR_NONE through the normal log_event pipeline (decision
+# (b) in tasks.md: detection runs after load_language); the `:-` default
+# only keeps `set -u` from aborting if i18n was never loaded.
+detect_compositor() {
+  local c _out='' _seen=''
+  local -a _cands=() _ordered=()
+  # env hints (ORDER only — never decide): strongest socket/signature hints
+  # first, then the desktop-name hint, then both defaults.
+  [ -n "${NIRI_SOCKET:-}" ] && _cands+=(niri)
+  [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && _cands+=(hypr)
+  case "${XDG_CURRENT_DESKTOP:-}" in
+    *[Nn]iri*) _cands+=(niri) ;;
+    *[Hh]ypr*) _cands+=(hypr) ;;
+  esac
+  _cands+=(hypr niri)
+  for c in "${_cands[@]}"; do
+    # dedupe, preserving hint order
+    [[ ";${_seen};" == *";$c;"* ]] || { _ordered+=("$c"); _seen="${_seen};$c"; }
+  done
+  COMPOSITOR=none
+  for c in "${_ordered[@]}"; do
+    case "$c" in
+      hypr)
+        command -v hyprctl &>/dev/null || continue
+        if _out=$(timeout 2 hyprctl monitors -j 2>/dev/null | jq -e . 2>/dev/null); then
+          COMPOSITOR=hypr
+          # shellcheck disable=SC2034  # probe cache read by _monitors_hypr / get_dpi_scale
+          _PROBE_JSON_HYPR="$_out"
+          return 0
+        fi
+        ;;
+      niri)
+        command -v niri &>/dev/null || continue
+        if _out=$(timeout 2 niri msg --json outputs 2>/dev/null | jq -e . 2>/dev/null); then
+          # shellcheck disable=SC2034  # COMPOSITOR is the engine/test-facing contract var
+          COMPOSITOR=niri
+          # shellcheck disable=SC2034  # probe cache read by _monitors_niri
+          _PROBE_JSON_NIRI="$_out"
+          return 0
+        fi
+        ;;
+    esac
+  done
+  log_event "WARN" "${MSG_COMPOSITOR_NONE:-No compositor responded (Hyprland/Niri). Degraded mode: /f, DPI 100%, no workspace pinning or monitor menu.}"
+  return 0
+}
+
+# _monitors_hypr — canonical model from hypr raw JSON (D2)
+#
+# Input: `hyprctl monitors -j` array (probe cache if warm, else a plain
+# fetch — the plain form keeps pre-migration callers and function-mock unit
+# tests byte-compatible with the legacy compute_dpi_flags source). Output:
+# canonical array [{id,desc,x,y,w,h,scale,ws_ref}] in LOGICAL px.
+#
+# The physical→logical `/scale` division lives HERE AND ONLY HERE (spec
+# compositor-backends::hypr-owns-/scale; guarded structurally by
+# compositor-backends.bats::scale_conversion_only_in_hypr_adapter). x/y pass
+# through unconverted — hypr reports logical origins already. `sort_by(.x)`
+# is verbatim engine semantics (detection-order ids are NOT left-to-right;
+# see engine comments). Malformed input → jq fails → `[]` (value fallback,
+# the engine's established monitor-query degrade — never an abort).
+_monitors_hypr() {
+  local raw
+  if [ -n "${_PROBE_JSON_HYPR:-}" ]; then
+    raw="$_PROBE_JSON_HYPR"
+  else
+    raw=$(hyprctl monitors -j 2>/dev/null) || raw=''
+  fi
+  printf '%s' "$raw" | jq -c '
+    [ .[]
+      | { id:   .id,
+          desc: .description,
+          x:    .x,
+          y:    .y,
+          w:    (.width  / .scale | round),
+          h:    (.height / .scale | round),
+          scale: .scale,
+          ws_ref: .activeWorkspace.id } ]
+    | sort_by(.x)
+  ' 2>/dev/null || printf '[]'
+}
+
+# _monitors_niri — canonical model from niri object-keyed outputs (D2)
+#
+# Input: `niri msg --json outputs` (object keyed by output NAME — probe cache
+# if warm, else plain fetch) joined with `niri msg --json workspaces`.
+# Output: canonical array in LOGICAL px — niri's logical.* is already logical
+# and passes through UNCONVERTED (no /scale anywhere). Mapping per D2:
+#   id   = output name (stable selection token, e.g. "DP-2")
+#   desc = "make model serial" (identical models disambiguate by serial)
+#   scale = logical.scale (effective) — NEVER top-level `scale`, which is the
+#          *configured* scale and MAY be null (live-probed)
+#   ws_ref = name of the output's active workspace
+#          (.output==$key and (.is_active // .is_focused) — resolved decision
+#          (a) in tasks.md; null-tolerant: no active ws → null, unmapped
+#          workspaces (output:null) never match)
+# Ordering: sort_by(logical.x, logical.y) — the documented deterministic
+# order for niri's object-keyed shape.
+_monitors_niri() {
+  local out_raw ws_raw
+  if [ -n "${_PROBE_JSON_NIRI:-}" ]; then
+    out_raw="$_PROBE_JSON_NIRI"
+  else
+    out_raw=$(niri msg --json outputs 2>/dev/null) || out_raw=''
+  fi
+  ws_raw=$(niri msg --json workspaces 2>/dev/null) || ws_raw='[]'
+  printf '%s' "$out_raw" | jq -c --arg ws "$ws_raw" '
+    ($ws | fromjson) as $wsj
+    | [ to_entries[]
+        | . as $e
+        | { id:   $e.key,
+            desc: (($e.value.make   // "")
+                 + " " + ($e.value.model  // "")
+                 + " " + ($e.value.serial // "")),
+            x: $e.value.logical.x,
+            y: $e.value.logical.y,
+            w: $e.value.logical.width,
+            h: $e.value.logical.height,
+            scale: $e.value.logical.scale,
+            ws_ref: ( [ $wsj[]
+                        | select(.output == $e.key
+                                 and ((.is_active // .is_focused) // false)) ]
+                      | .[0].name // null ) } ]
+    | sort_by(.x, .y)
+  ' 2>/dev/null || printf '[]'
+}
+
+# get_monitors_json (D1) — ONE canonical logical array, any backend
+#
+# Prints the canonical array and caches it in _CANON_MONITORS (lazy — D4:
+# ≤1 IPC per query type per run). COMPOSITOR='' (unset) behaves as hypr so
+# pre-migration engine callers and unit tests keep legacy byte-parity.
+get_monitors_json() {
+  if [ -n "${_CANON_MONITORS:-}" ]; then
+    printf '%s' "$_CANON_MONITORS"
+    return 0
+  fi
+  local canon=''
+  case "${COMPOSITOR:-}" in
+    niri)    canon=$(_monitors_niri) || canon='' ;;
+    none)    canon='[]' ;;
+    ''|hypr) canon=$(_monitors_hypr) || canon='' ;;
+    *)       canon='[]' ;;
+  esac
+  # shellcheck disable=SC2034  # canonical cache read on every later call
+  _CANON_MONITORS="${canon:-[]}"
+  printf '%s' "$_CANON_MONITORS"
+}
+
+# get_dpi_scale (D5) — backend-internal DPI scale source
+#
+# Prints a monitors JSON ARRAY whose .[0].scale is the DPI scale, so the
+# consumer jq program stays byte-identical across backends:
+#   hypr (or unset — pre-migration legacy parity) → the RAW hyprctl monitors
+#     array, probe cache if warm (detection ORDER .[0], exactly what the
+#     engine read before this layer existed);
+#   niri → the canonical array (leftmost = sort_by x,y; scale is the
+#     effective logical.scale);
+#   none → empty output (consumer lands in the existing 100% WARN path).
+# The empty/failed fetch case propagates rc to the caller's `|| out=""`
+# guard (compute_dpi_flags) — this fn adds no cosmetic guards of its own.
+get_dpi_scale() {
+  case "${COMPOSITOR:-}" in
+    niri) get_monitors_json ;;
+    none) printf '' ;;
+    ''|hypr)
+      if [ -n "${_PROBE_JSON_HYPR:-}" ]; then
+        printf '%s' "$_PROBE_JSON_HYPR"
+      else
+        hyprctl monitors -j 2>/dev/null
+      fi
+      ;;
+  esac
+}
+
+# compositor_find_window <class> (D6) — window-existence poll / token lookup
+#
+# hypr: byte-identical to the engine's poll (engine:1094) — `clients -j`
+# piped through `jq -e any(.[]; .class==$c)`; rc decides, args travel via
+# --arg, the whole call sits in the caller's poll `if` (no cosmetic guards).
+# niri: looks the window up in `niri msg --json windows` by app_id and
+# caches its numeric id in _WIN_TOKEN (the --window-id token the dispatch
+# wrappers need). XWayland app_id↔/wm-class mapping is D8-gated (PR3).
+# none: rc 1 (window can never appear — the engine's expand path already
+# fails with its existing "no active session" message, D9).
+compositor_find_window() {
+  local class="$1" id
+  case "${COMPOSITOR:-}" in
+    niri)
+      id=$(niri msg --json windows 2>/dev/null | jq -r --arg c "$class" \
+        '[.[] | select(.app_id == $c) | .id][0] // empty' 2>/dev/null) || id=''
+      if [ -n "$id" ]; then
+        # shellcheck disable=SC2034  # token read by the niri dispatch wrappers
+        _WIN_TOKEN="$id"
+        return 0
+      fi
+      return 1
+      ;;
+    ''|hypr)
+      hyprctl clients -j 2>/dev/null | jq -e --arg c "$class" 'any(.[]; .class==$c)' >/dev/null 2>&1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# _hypr_dispatch / _niri_dispatch — argv emission for compositor mutations
+#
+# `&>/dev/null || true` is the documented-cosmetic class (engine-robustness
+# spec: hyprctl/niri DISPATCH calls only — a lost cosmetic dispatch must
+# never abort the launch pipeline). The engine-robustness invariant holds:
+# NO cosmetic guard is ever added around jq, file tests, or anything
+# security-relevant — those live in the callers above.
+_hypr_dispatch() {
+  hyprctl "$@" &>/dev/null || true
+}
+
+_niri_dispatch() {
+  niri "$@" &>/dev/null || true
+}
+
+# _dispatch_noop — COMPOSITOR=none behavior (D6/D9): one WARN through the
+# normal MSG pipeline, zero IPC, rc 0.
+_dispatch_noop() {
+  log_event "WARN" "${MSG_DISPATCH_NOOP:-No compositor available: window operation skipped (degraded mode).}"
+  return 0
+}
+
+# _niri_window_id — ensure _WIN_TOKEN is set (auto-lookup via WM_CLASS so
+# wrappers stay callable without an explicit find-window poll first).
+_niri_window_id() {
+  if [ -z "${_WIN_TOKEN:-}" ]; then
+    compositor_find_window "${WM_CLASS:-}" || return 1
+  fi
+  return 0
+}
+
+# --- Dispatch wrappers (D6) — window ref via WM_CLASS global + LOGICAL px ---
+# hypr argv is byte-identical to today's engine forms (regression-locked by
+# compositor-backends.bats::dispatch_golden_argv_hypr_forms); niri mappings
+# per design D6 (`--window-id` flag — verified live, NOT `--id`; workspace
+# moves also focus the target workspace). Resize/move positioning semantics
+# under niri are gated on the D8 live verification (PR3).
+
+dispatch_move_to_ws() {
+  local ws="$1"
+  case "${COMPOSITOR:-}" in
+    niri)
+      _niri_window_id || { _dispatch_noop; return 0; }
+      _niri_dispatch msg action move-window-to-workspace "$ws" --window-id "$_WIN_TOKEN"
+      _niri_dispatch msg action focus-workspace "$ws"
+      ;;
+    none)
+      _dispatch_noop
+      ;;
+    ''|hypr)
+      _hypr_dispatch dispatch movetoworkspacesilent "${ws},class:${WM_CLASS:-}"
+      ;;
+  esac
+  return 0
+}
+
+dispatch_focus() {
+  case "${COMPOSITOR:-}" in
+    niri)
+      _niri_window_id || { _dispatch_noop; return 0; }
+      _niri_dispatch msg action focus-window --id "$_WIN_TOKEN"
+      ;;
+    none)
+      _dispatch_noop
+      ;;
+    ''|hypr)
+      _hypr_dispatch dispatch focuswindow "class:${WM_CLASS:-}"
+      ;;
+  esac
+  return 0
+}
+
+dispatch_float() {
+  case "${COMPOSITOR:-}" in
+    niri)
+      _niri_window_id || { _dispatch_noop; return 0; }
+      _niri_dispatch msg action move-window-to-floating --id "$_WIN_TOKEN"
+      ;;
+    none)
+      _dispatch_noop
+      ;;
+    ''|hypr)
+      _hypr_dispatch dispatch setfloating "class:${WM_CLASS:-}"
+      ;;
+  esac
+  return 0
+}
+
+dispatch_fullscreen() {
+  case "${COMPOSITOR:-}" in
+    niri)
+      _niri_window_id || { _dispatch_noop; return 0; }
+      _niri_dispatch msg action fullscreen-window --id "$_WIN_TOKEN"
+      ;;
+    none)
+      _dispatch_noop
+      ;;
+    ''|hypr)
+      # mode "0" = true edge-to-edge fullscreen; no window arg — acts on the
+      # focused window, which is why dispatch_focus runs first (engine:1121).
+      _hypr_dispatch dispatch fullscreen "0"
+      ;;
+  esac
+  return 0
+}
+
+dispatch_resize() {
+  local w="$1" h="$2"
+  case "${COMPOSITOR:-}" in
+    niri)
+      _niri_window_id || { _dispatch_noop; return 0; }
+      _niri_dispatch msg action set-window-width --id "$_WIN_TOKEN" "$w"
+      _niri_dispatch msg action set-window-height --id "$_WIN_TOKEN" "$h"
+      ;;
+    none)
+      _dispatch_noop
+      ;;
+    ''|hypr)
+      _hypr_dispatch dispatch resizewindowpixel "exact ${w} ${h},class:${WM_CLASS:-}"
+      ;;
+  esac
+  return 0
+}
+
+dispatch_move() {
+  local x="$1" y="$2"
+  case "${COMPOSITOR:-}" in
+    niri)
+      _niri_window_id || { _dispatch_noop; return 0; }
+      _niri_dispatch msg action move-floating-window --id "$_WIN_TOKEN" -x "$x" -y "$y"
+      ;;
+    none)
+      _dispatch_noop
+      ;;
+    ''|hypr)
+      _hypr_dispatch dispatch movewindowpixel "exact ${x} ${y},class:${WM_CLASS:-}"
+      ;;
+  esac
+  return 0
 }

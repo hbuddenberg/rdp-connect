@@ -1,0 +1,10 @@
+[
+  {
+    "address": "0x55f1eee0",
+    "class": "rdp-demo",
+    "title": "ti-partner - Remote Desktop",
+    "floating": false,
+    "monitor": 0,
+    "workspace": { "id": 6, "name": "6" }
+  }
+]

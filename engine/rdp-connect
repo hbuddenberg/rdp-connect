@@ -82,6 +82,7 @@ for candidate in \
 done
 
 C_TITLE="" C_CMD="" C_FLAG="" C_KEY="" C_DIM="" C_BOLD="" C_R=""
+# shellcheck source=/dev/null
 [ -n "$LIB_FILE" ] && source "$LIB_FILE" && setup_colors
 
 if [ "${1:-}" == "--version" ] || [ "${1:-}" == "-V" ]; then

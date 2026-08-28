@@ -491,7 +491,6 @@ resolve_monitor_order() {
         end' 2>/dev/null)
     count=$(printf '%s' "$id_matches" | grep -c . || true)
     if [ "$count" -ne 1 ]; then
-      printf 'resolve_monitor_order: "%s" matched %d monitor(s) via id/description (need exactly 1)\n' "$tok" "$count" >&2
       return 1
     fi
     resolved+=("$id_matches")

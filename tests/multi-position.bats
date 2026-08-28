@@ -56,7 +56,7 @@ load test_helper
   [ -f "$engine" ] || fail "engine missing at $engine"
   # FreeRDP negotiates /multimon's window size itself from /monitors:<ids> —
   # forcing a resizewindowpixel dispatch here would fight that negotiation.
-  run bash -c "awk '/_EFF_MODE:-multi\\}\" = \"multi\"/,/^    fi\$/' '$engine' | grep -cF 'dispatch resizewindowpixel'"
+  run bash -c "awk '/_EFF_MODE:-multi\\}\" = \"multi\"/,/^    fi\$/' '$engine' | grep -cF 'dispatch resizewindowpixel' || true"
   [ "$status" -eq 0 ] || fail "grep failed"
   assert_output "0"
 }

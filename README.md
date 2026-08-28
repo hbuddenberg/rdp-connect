@@ -1,63 +1,43 @@
-# rdp-connect
+# 🖥️ rdp-connect
 
-![status](https://img.shields.io/badge/status-strict--tdd--active-brightgreen)
-![strict_tdd](https://img.shields.io/badge/strict__tdd-true-brightgreen)
-![CI](https://github.com/hbuddenberg/rdp-connect/actions/workflows/test.yml/badge.svg)
-![tests](https://img.shields.io/badge/tests-74%20bats%20cases%20(8%20files)-brightgreen)
-![capabilities](https://img.shields.io/badge/capabilities-6-blue)
-![distros](https://img.shields.io/badge/distros-Arch%20%E2%9C%93%20%7C%20Debian%20%E2%9C%93%20%7C%20Fedora%20%E2%9C%93%20%7C%20Alpine%20%E2%9C%97-orange)
-![spec](https://img.shields.io/badge/spec-driven-openspec-blueviolet)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg?style=flat-square)](https://github.com/hbuddenberg/rdp-connect/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
+[![CI](https://github.com/hbuddenberg/rdp-connect/actions/workflows/test.yml/badge.svg)](https://github.com/hbuddenberg/rdp-connect/actions)
+[![Compositors](https://img.shields.io/badge/compositors-Hyprland%20%7C%20Niri-94e2d5.svg?style=flat-square)](https://github.com/hbuddenberg/rdp-connect)
 
-RDP connection framework for Hyprland/Wayland built on `xfreerdp3`.
+Modern RDP connection framework for **Hyprland**, **Niri**, and Wayland desktop environments built on `xfreerdp3`.
 
-## Capabilities
+## ✨ Features
 
-| Capability | What it guarantees |
-|---|---|
-| `engine-security` | Hardened env parser (`parse_env_safe`) — allowlist + quote/comment handling, no `source`/`eval`, CRLF/whitespace tolerance, raw-preview diagnostics |
-| `engine-robustness` | Strict mode (`set -euo pipefail`), `require_cmd` preflight, `/from-stdin:force` build gate, array-based flag expansion, cleanup LOG_FILE guard, per-PID error diagnostics, preflight input trimming, **process-group isolation + trap-kill reaps `xfreerdp3` on signal-induced exit (R7/orphan-kill fix)** |
-| `hidpi-scaling` | Pure-bash + jq HiDPI math — no `bc`/`python3` deps; safe fallback when scale is unparsable |
-| `instance-locking` | uid-private PID path under `${XDG_RUNTIME_DIR:-/tmp}`; stale-lock reclamation via `flock`; **path persists after exit (R7 fix) — kernel releases flock on fd close, next start reclaims via `flock -n`** |
-| `installer` | Cross-distro deterministic deployment — `/etc/os-release` detection (pacman→dnf→apt), idempotent `install -D`, post-install smoke test, SHA-256 manifest |
-| `test-harness` | bats-core suite (74 `@test` blocks across 8 files) + `make {test,lint,ci,smoke,verify-manifest}` + GitHub Actions CI; enforces `strict_tdd: true` at the unit level |
+- **Native Quickshell Modal UI**: Modern Omarchy 4 standalone modal applet with 4px border radius, 2px dynamic accent border, visual profile picker, monitor selector, and hardware feature toggles (Audio, Clipboard, Drive, USB, Webcam).
+- **Multi-Launcher Support**: Quickshell → Walker → Wofi → Rofi fallback hierarchy.
+- **Multi-Compositor Support**: Native IPC integration with both **Hyprland** (`hyprctl`) and **Niri** (`niri msg`).
+- **Profile-based connections**: Each server is an `.env` file under `~/.config/rdp/profiles/`.
+- **Hardened Security**: Env parser (`parse_env_safe`) with allowlist + quote/comment handling, no `source`/`eval`, password piped via stdin (`/from-stdin:force`, hidden from `ps aux`), `flock` single-instance guard.
+- **Robustness**: Strict mode (`set -euo pipefail`), `require_cmd` preflight, array-based flag expansion, process-group isolation so termination reaps all child processes.
+- **Pre-flight checks**: TCP socket probe on port 3389 before launching.
+- **i18n**: Spanish/English message dictionaries, auto-detected from `$LANG`.
 
-Canonical contracts live at **[`openspec/specs/`](openspec/specs/)** — one directory per capability, each with a `spec.md` containing the normative requirements and Given/When/Then scenarios.
+## 📦 Installation
 
-## What it does
-
-- **Profile-based connections**: each server is an `.env` file under `~/.config/rdp/profiles/`
-- **Graphical selector**: `wofi`/`rofi` menu when invoked without args
-- **Hyprland integration**: auto workspaces, window rules, multi-monitor, HiDPI scaling (jq-native, no `bc`/`python3`)
-- **Security**: hardened env parser (no `source` — allowlist + quote/comment handling), password piped via stdin (hidden from `ps aux`), `flock` single-instance guard, uid-private PID path under `XDG_RUNTIME_DIR`
-- **Robustness**: strict mode (`set -euo pipefail`), `require_cmd` preflight for every external binary, `/from-stdin:force` build gate, array-based flag expansion, **process-group isolation so `pkill rdp-connect` reaps `xfreerdp3` children** (R7/orphan-kill fix from `multi-peer-race`)
-- **Pre-flight checks**: TCP socket probe on port 3389 before launching
-- **i18n**: Spanish/English message dictionaries, auto-detected from `$LANG`
-- **Auditing**: per-profile logs under `~/.local/state/rdp/`
-
-## Requirements
-
-`hyprctl` (Hyprland) is a **hard requirement** — the engine probes it at startup and refuses to start (exit 127) if absent.
-
-| Binary | Purpose | pacman | apt | dnf |
-|---|---|---|---|---|
-| `xfreerdp3` | RDP client (must support `/from-stdin:force`) | `freerdp` | `freerdp3-x11` | `freerdp` |
-| `jq` | HiDPI scale math + monitor parsing | `jq` | `jq` | `jq` |
-| `flock` | Single-instance guard | `util-linux` | `util-linux` | `util-linux` |
-| `notify-send` | Desktop notifications | `libnotify` | `libnotify-bin` | `libnotify` |
-| `wofi` **or** `rofi` | Graphical profile selector | `wofi` | `wofi` | `wofi` |
-| `hyprctl` | Hyprland IPC (workspace/monitor rules) | `hyprland` | `hyprland`\* | `hyprland` |
-| `shellcheck` | Smoke-test linter (optional) | `shellcheck` | `shellcheck` | `shellcheck` |
-
-\* `hyprland` is **not in Debian main** — install it from a PPA, backports, or build from source ([Hyprland wiki](https://wiki.hyprland.org/)). The installer warns but does not fail on Debian if `hyprctl` is absent; the engine's `require_cmd` gate catches it at startup.
-
-`bc` and `python3` are deliberately **not** required — HiDPI scale math is done via jq.
-
-## Install
-
-One-liner:
+### AUR (Arch Linux)
 
 ```bash
-git clone https://github.com/hbuddenberg/rdp-connect && cd rdp-connect && ./install-rdp-framework.sh
+# Using yay
+yay -S rdp-connect
+
+# Using paru
+paru -S rdp-connect
+```
+
+### Manual Install
+
+```bash
+git clone https://github.com/hbuddenberg/rdp-connect.git
+cd rdp-connect
+chmod +x install.sh
+./install.sh
+```
 ```
 
 The installer:

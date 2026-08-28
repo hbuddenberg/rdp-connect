@@ -67,20 +67,34 @@ done
 set -- "${_new_args[@]}"
 unset _new_args
 
-# --- COLORS (rich-like) + MODO AYUDA: rdp-connect --help / -h ---
-# setup_colors (in lib) populates C_* only when stdout is a TTY and NO_COLOR is
-# unset. The lib is fully sourced later (L108); here we source it ONLY if the
-# file exists so --help can colorize. `make smoke` runs --help in a throwaway
-# HOME without the deployed lib -> we degrade to plain help (C_* empty) and still
-# exit 0 (preserves the W-5 fix: --help works without the lib/mkdir setup).
+# --- COLORS (rich-like) + MODO AYUDA: rdp-connect --help / -h / --version ---
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+LIB_FILE=""
+for candidate in \
+    "${SCRIPT_DIR}/../lib/rdp-common.bash" \
+    "/usr/share/rdp-connect/lib/rdp-common.bash" \
+    "/usr/lib/rdp/rdp-common.bash" \
+    "$HOME/.local/lib/rdp/rdp-common.bash"; do
+    if [ -f "$candidate" ]; then
+        LIB_FILE="$candidate"
+        break
+    fi
+done
+
 C_TITLE="" C_CMD="" C_FLAG="" C_KEY="" C_DIM="" C_BOLD="" C_R=""
-[ -f "$HOME/.local/lib/rdp/rdp-common.bash" ] && source "$HOME/.local/lib/rdp/rdp-common.bash" && setup_colors
+[ -n "$LIB_FILE" ] && source "$LIB_FILE" && setup_colors
+
+if [ "${1:-}" == "--version" ] || [ "${1:-}" == "-V" ]; then
+    echo "rdp-connect v2.0.0"
+    exit 0
+fi
+
 if [ "${1:-}" == "--help" ] || [ "${1:-}" == "-h" ]; then
     cat << HELP_EOF
 ${C_TITLE}rdp-connect${C_R} ${C_DIM}— RDP connection framework for Hyprland/Wayland (xfreerdp3)${C_R}
 
 ${C_BOLD}Usage:${C_R}
-  ${C_CMD}rdp-connect${C_R}                              ${C_DIM}Open graphical selector (wofi/rofi)${C_R}
+  ${C_CMD}rdp-connect${C_R}                              ${C_DIM}Open graphical selector (Quickshell/Walker/Wofi/Rofi)${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}<profile>${C_R}                        ${C_DIM}Direct connection to a profile${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--new${C_R} ${C_KEY}<name>${C_R}                   ${C_DIM}Create a new profile from template${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--edit${C_R} ${C_KEY}<profile>${C_R}                 ${C_DIM}Edit a profile in your \$EDITOR${C_R}
@@ -96,6 +110,7 @@ ${C_BOLD}Usage:${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--monitors${C_R} ${C_KEY}<n>${C_R} ${C_KEY}<profile>${C_R}     ${C_DIM}Multi/span/expand: use first <n> detected monitors${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--monitor-order${C_R} ${C_KEY}<ids>${C_R} ${C_KEY}<profile>${C_R}  ${C_DIM}Multi/span/expand: monitor IDs in order (or a description substring, e.g. "ASUS", to survive port/id renumbering across reboots)${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--client${C_R} ${C_KEY}<x11|sdl|wayland>${C_R} ${C_KEY}<profile>${C_R}  ${C_DIM}Choose the FreeRDP client binary${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--version${C_R} | ${C_FLAG}-V${C_R}               ${C_DIM}Show version${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--help${C_R} | ${C_FLAG}-h${C_R}                  ${C_DIM}Show this help message${C_R}
 
 ${C_BOLD}Profiles:${C_R}   ${C_DIM}~/.config/rdp/profiles/*.env${C_R}
@@ -111,12 +126,15 @@ PROFILES_DIR="$HOME/.config/rdp/profiles"
 I18N_DIR="$HOME/.config/rdp/i18n"
 LOG_DIR="$HOME/.local/state/rdp"
 SHARE_DIR="$HOME/Compartido"
-LIB_FILE="$HOME/.local/lib/rdp/rdp-common.bash"
 
 mkdir -p "$LOG_DIR" "$SHARE_DIR" "$PROFILES_DIR" "$I18N_DIR"
 
 # --- CARGA DE LA BIBLIOTECA DE FUNCIONES PURAS (F3 parser, F5 PID path, F1 hidpi, F6/F8 helpers) ---
-# shellcheck source=/home/hbuddenberg/.local/lib/rdp/rdp-common.bash
+if [ -z "$LIB_FILE" ] || [ ! -f "$LIB_FILE" ]; then
+    echo "Error: rdp-common.bash library not found" >&2
+    exit 1
+fi
+# shellcheck source=/dev/null
 source "$LIB_FILE"
 
 # --- PREFLIGHT (F6 + F7): every external binary present + xfreerdp3 build gate ---
@@ -394,47 +412,139 @@ if [ -n "$_EDIT_PROFILE" ]; then
     exit 0
 fi
 
-# --- MODO SELECTOR (Wofi / Rofi) ---
-PROFILE="${1:-}"
-if [ -z "$PROFILE" ]; then
-    # F6 launcher OR-check: wofi OR rofi must be present in selector mode.
-    # This check is deferred to here (not in the startup preflight) because the
-    # launcher is only needed when no profile argument is given — a direct
-    # `rdp-connect <profile>` never invokes the selector.
-    if ! command -v wofi &>/dev/null && ! command -v rofi &>/dev/null; then
-        echo "missing required command: wofi or rofi (install one via your package manager)" >&2
-        exit 127
-    fi
-    # Build menu items with Nerd Font icon + HOST + USER (hyprcaffeine style).
-    MENU_ITEMS=()
+# --- MODO SELECTOR (Quickshell / Walker / Wofi / Rofi) ---
+QS_PROFILE=""
+QS_MONITORS=""
+QS_AUDIO=""
+QS_CLIPBOARD=""
+QS_DRIVE=""
+QS_USB=""
+QS_WEBCAM=""
+
+run_quickshell_selector() {
+    local qs_ui=""
+    for candidate in \
+        "${HOME}/.config/rdp/ui/shell.qml" \
+        "/usr/share/rdp-connect/ui/shell.qml" \
+        "${SCRIPT_DIR}/../ui/shell.qml" \
+        "${SCRIPT_DIR}/ui/shell.qml"; do
+        if [ -f "$candidate" ]; then
+            qs_ui="$candidate"
+            break
+        fi
+    done
+    [ -z "$qs_ui" ] && return 1
+
+    local user_str="${USER:-$(whoami)}"
+    local data_file="/tmp/rdp-data-${user_str}.json"
+    local result_file="/tmp/rdp-result-${user_str}.json"
+    rm -f "$result_file" 2>/dev/null || true
+
+    local p_entries=()
     for _pf in "$PROFILES_DIR"/*.env; do
         [ -f "$_pf" ] || continue
+        local _pn _ph _pu _pa _pc _pd _pusb _pweb _m_ord _m_arr
         _pn=$(basename "$_pf" .env)
         _ph=$(grep -m1 '^HOST=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
         _pu=$(grep -m1 '^USER_RDP=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
-        _line="󰍹 ${_pn}"
-        [ -n "$_ph" ] && _line="${_line}    ${_ph}"
-        [ -n "$_pu" ] && _line="${_line}    ${_pu}"
-        MENU_ITEMS+=("$_line")
+        _pa=$(grep -m1 '^AUDIO_REDIRECT=' "$_pf" 2>/dev/null | cut -d= -f2- | tr -cd '0-9' || echo "1")
+        _pc=$(grep -m1 '^CLIPBOARD_SYNC=' "$_pf" 2>/dev/null | cut -d= -f2- | tr -cd '0-9' || echo "1")
+        _pd=$(grep -m1 '^DRIVE_REDIRECT=' "$_pf" 2>/dev/null | cut -d= -f2- | tr -cd '0-9' || echo "1")
+        _pusb=$(grep -m1 '^USB_REDIRECT=' "$_pf" 2>/dev/null | cut -d= -f2- | tr -cd '0-9' || echo "0")
+        _pweb=$(grep -m1 '^WEBCAM_REDIRECT=' "$_pf" 2>/dev/null | cut -d= -f2- | tr -cd '0-9' || echo "0")
+        _m_ord=$(grep -m1 '^MONITOR_ORDER=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
+        _m_arr="[]"
+        if [ -n "$_m_ord" ]; then
+            _m_arr=$(jq -nc --arg list "$_m_ord" '$list | split(",")' 2>/dev/null || echo '[]')
+        fi
+
+        p_entries+=( "$(jq -nc \
+            --arg name "$_pn" \
+            --arg host "$_ph" \
+            --arg user "$_pu" \
+            --argjson audio "${_pa:-1}" \
+            --argjson clipboard "${_pc:-1}" \
+            --argjson drive "${_pd:-1}" \
+            --argjson usb "${_pusb:-0}" \
+            --argjson webcam "${_pweb:-0}" \
+            --argjson monitors "${_m_arr}" \
+            '{name: $name, host: $host, user: $user, audio: $audio, clipboard: $clipboard, drive: $drive, usb: $usb, webcam: $webcam, monitors: $monitors}')" )
     done
-    # Dynamic box height: ~45px per entry + 80px search/padding, min 200, cap 800.
-    # IMPORTANT: walker says "DON'T USE SHORTHAND" for -h (conflicts with --help).
-    # Must use --height (long form).
-    _box_h=$(( (${#MENU_ITEMS[@]} * 45) + 80 ))
-    [ "$_box_h" -lt 200 ] && _box_h=200
-    [ "$_box_h" -gt 800 ] && _box_h=800
-    _sel=""
-    if command -v walker &>/dev/null; then
-        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | walker -d -N --placeholder="🖥 RDP Connect" --width=1050 --maxwidth=1050 --height="$_box_h" 2>/dev/null || true)
-    elif command -v wofi &>/dev/null; then
-        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | wofi -d -p "🖥 RDP Connect" -W 1050 -H "$_box_h" --cache-file=/dev/null 2>/dev/null || true)
-    elif command -v rofi &>/dev/null; then
-        _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | rofi -dmenu -p "🖥 RDP Connect" -i -l "${#MENU_ITEMS[@]}" 2>/dev/null || true)
+
+    local profiles_json="[]"
+    if [ "${#p_entries[@]}" -gt 0 ]; then
+        profiles_json=$(printf '%s\n' "${p_entries[@]}" | jq -s '.' 2>/dev/null || echo '[]')
     fi
-    # Extract profile name: strip the icon prefix, then first field before sep.
-    _stripped="${_sel#* }"
-    PROFILE="${_stripped%%    *}"
-    unset _pf _pn _ph _pu _line _sel _stripped MENU_ITEMS
+
+    local monitors_json="[]"
+    if [ "${COMPOSITOR:-}" != "none" ]; then
+        monitors_json=$(get_monitors_json 2>/dev/null || echo '[]')
+    fi
+
+    jq -nc \
+        --argjson profiles "${profiles_json}" \
+        --argjson monitors "${monitors_json}" \
+        '{profiles: $profiles, monitors: $monitors}' > "${data_file}" 2>/dev/null || true
+
+    quickshell -p "${qs_ui}" >/dev/null 2>&1 || true
+
+    if [ -f "${result_file}" ]; then
+        local action
+        action=$(jq -r '.action // ""' "${result_file}" 2>/dev/null || true)
+        if [ "${action}" = "connect" ]; then
+            QS_PROFILE=$(jq -r '.profile // ""' "${result_file}" 2>/dev/null || true)
+            QS_MONITORS=$(jq -r '.monitors // [] | join(",")' "${result_file}" 2>/dev/null || true)
+            QS_AUDIO=$(jq -r 'if .audio == true then 1 else 0 end' "${result_file}" 2>/dev/null || echo 1)
+            QS_CLIPBOARD=$(jq -r 'if .clipboard == true then 1 else 0 end' "${result_file}" 2>/dev/null || echo 1)
+            QS_DRIVE=$(jq -r 'if .drive == true then 1 else 0 end' "${result_file}" 2>/dev/null || echo 1)
+            QS_USB=$(jq -r 'if .usb == true then 1 else 0 end' "${result_file}" 2>/dev/null || echo 0)
+            QS_WEBCAM=$(jq -r 'if .webcam == true then 1 else 0 end' "${result_file}" 2>/dev/null || echo 0)
+            rm -f "${result_file}" "${data_file}" 2>/dev/null || true
+            return 0
+        fi
+        rm -f "${result_file}" "${data_file}" 2>/dev/null || true
+        exit 0
+    fi
+    return 1
+}
+
+PROFILE="${1:-}"
+if [ -z "$PROFILE" ]; then
+    if command -v quickshell &>/dev/null && run_quickshell_selector; then
+        PROFILE="${QS_PROFILE}"
+    else
+        # F6 launcher OR-check: walker, wofi OR rofi must be present in fallback selector mode.
+        if ! command -v walker &>/dev/null && ! command -v wofi &>/dev/null && ! command -v rofi &>/dev/null; then
+            echo "missing required command: quickshell, walker, wofi, or rofi" >&2
+            exit 127
+        fi
+        # Build menu items with Nerd Font icon + HOST + USER (hyprcaffeine style).
+        MENU_ITEMS=()
+        for _pf in "$PROFILES_DIR"/*.env; do
+            [ -f "$_pf" ] || continue
+            _pn=$(basename "$_pf" .env)
+            _ph=$(grep -m1 '^HOST=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
+            _pu=$(grep -m1 '^USER_RDP=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
+            _line="󰍹 ${_pn}"
+            [ -n "$_ph" ] && _line="${_line}    ${_ph}"
+            [ -n "$_pu" ] && _line="${_line}    ${_pu}"
+            MENU_ITEMS+=("$_line")
+        done
+        _box_h=$(( (${#MENU_ITEMS[@]} * 45) + 80 ))
+        [ "$_box_h" -lt 200 ] && _box_h=200
+        [ "$_box_h" -gt 800 ] && _box_h=800
+        _sel=""
+        if command -v walker &>/dev/null; then
+            _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | walker -d -N --placeholder="🖥 RDP Connect" --width=1050 --maxwidth=1050 --height="$_box_h" 2>/dev/null || true)
+        elif command -v wofi &>/dev/null; then
+            _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | wofi -d -p "🖥 RDP Connect" -W 1050 -H "$_box_h" --cache-file=/dev/null 2>/dev/null || true)
+        elif command -v rofi &>/dev/null; then
+            _sel=$(printf '%s\n' "${MENU_ITEMS[@]}" | rofi -dmenu -p "🖥 RDP Connect" -i -l "${#MENU_ITEMS[@]}" 2>/dev/null || true)
+        fi
+        _stripped="${_sel#* }"
+        PROFILE="${_stripped%%    *}"
+        unset _pf _pn _ph _pu _line _sel _stripped MENU_ITEMS
+    fi
 fi
 [ -z "$PROFILE" ] && exit 0
 
@@ -474,6 +584,29 @@ trim_profile_fields
 
 [ -n "${LANG_OVERRIDE:-}" ] && load_language "$LANG_OVERRIDE"
 
+# Si vino de Quickshell, aplicar selecciones interactivas directamente
+if [ -n "${QS_PROFILE:-}" ]; then
+    [ -n "$QS_AUDIO" ] && AUDIO_REDIRECT="$QS_AUDIO" && set_profile_key "$ENV_FILE" "AUDIO_REDIRECT" "$QS_AUDIO"
+    [ -n "$QS_CLIPBOARD" ] && CLIPBOARD_SYNC="$QS_CLIPBOARD" && set_profile_key "$ENV_FILE" "CLIPBOARD_SYNC" "$QS_CLIPBOARD"
+    [ -n "$QS_DRIVE" ] && DRIVE_REDIRECT="$QS_DRIVE" && set_profile_key "$ENV_FILE" "DRIVE_REDIRECT" "$QS_DRIVE"
+    [ -n "$QS_USB" ] && USB_REDIRECT="$QS_USB" && set_profile_key "$ENV_FILE" "USB_REDIRECT" "$QS_USB"
+    [ -n "$QS_WEBCAM" ] && WEBCAM_REDIRECT="$QS_WEBCAM" && set_profile_key "$ENV_FILE" "WEBCAM_REDIRECT" "$QS_WEBCAM"
+    if [ -n "$QS_MONITORS" ]; then
+        MONITOR_ORDER="$QS_MONITORS"
+        set_profile_key "$ENV_FILE" "MONITOR_ORDER" "$QS_MONITORS"
+        IFS=',' read -ra _qs_m_ids <<< "$QS_MONITORS"
+        if [ "${#_qs_m_ids[@]}" -eq 1 ]; then
+            MONITOR_MODE="single"
+            MONITOR_ID="${_qs_m_ids[0]}"
+            set_profile_key "$ENV_FILE" "MONITOR_MODE" "single"
+            set_profile_key "$ENV_FILE" "MONITOR_ID" "$MONITOR_ID"
+        else
+            MONITOR_MODE="span"
+            set_profile_key "$ENV_FILE" "MONITOR_MODE" "span"
+        fi
+    fi
+fi
+
 # --- MENU DE PRECONEXIÓN: monitores + audio (checkbox emulado) ---
 # wofi/walker (y rofi) son dmenu de selección ÚNICA — ninguno de los tres
 # tiene checkboxes/multi-select nativo (confirmado: ni `wofi --help` ni
@@ -501,7 +634,7 @@ trim_profile_fields
 if [ -z "${MONITOR_MODE_OVERRIDE:-}" ] && [ "${COMPOSITOR:-}" != "none" ] && { command -v walker &>/dev/null || command -v wofi &>/dev/null; }; then
     _pm_json=$(get_monitors_json | jq -c '[.[] | select((.desc // "") != "")]' 2>/dev/null || echo '[]')
     _pm_count=$(printf '%s' "$_pm_json" | jq 'length' 2>/dev/null || echo 0)
-    if [ "${_pm_count:-0}" -gt 0 ] 2>/dev/null; then
+    if [ -z "${QS_PROFILE:-}" ] && [ "${_pm_count:-0}" -gt 0 ] 2>/dev/null; then
         declare -A _pm_checked=()
         # Estado inicial: derivado del profile ya parseado.
         if [ "${MONITOR_MODE:-single}" = "single" ] && [ -n "${MONITOR_ID:-}" ]; then

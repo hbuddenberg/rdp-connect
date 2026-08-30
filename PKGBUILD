@@ -1,6 +1,6 @@
 # Maintainer: Hans-Dieter Buddenberg <hbuddenberg@gmail.com>
 pkgname=rdp-connect
-pkgver=2.0.0
+pkgver=2.0.1
 pkgrel=1
 pkgdesc="🖥️ High-performance RDP connection manager for Hyprland, Niri & Wayland compositors with Quickshell, Walker & Wofi menus"
 arch=(any)

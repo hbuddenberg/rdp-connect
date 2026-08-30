@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [2.0.1] — 2026-08-30
+
+### Fixed
+
+- **Indirect Expansion Crash on `MONITOR_ID`**: Fixed Bash `set -euo pipefail` crash when `MONITOR_ID` contains spaces (e.g. monitor description strings like `"ASUSTek COMPUTER INC XG27ACS..."`) during indirect variable expansion for canvas capping resolution overrides.
+- **Single-Monitor Canonical Resolution**: Enhanced single-monitor mode resolution matching to resolve description substrings against canonical monitor JSON for correct workspace and geometry calculation under both Hyprland and Niri.
+
 ## [2.0.0] — 2026-08-28
 
 ### Added

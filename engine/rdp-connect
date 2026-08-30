@@ -86,7 +86,7 @@ C_TITLE="" C_CMD="" C_FLAG="" C_KEY="" C_DIM="" C_BOLD="" C_R=""
 [ -n "$LIB_FILE" ] && source "$LIB_FILE" && setup_colors
 
 if [ "${1:-}" == "--version" ] || [ "${1:-}" == "-V" ]; then
-    echo "rdp-connect v2.0.0"
+    echo "rdp-connect v2.0.1"
     exit 0
 fi
 
@@ -1046,8 +1046,13 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         # dispatcher below. Token match per D3 (string compare): hypr
         # numeric ids and niri output names both resolve.
         if [ -n "${MONITOR_ID:-}" ]; then
-            _single_json=$(get_monitors_json | jq -c --arg id "$MONITOR_ID" \
+            _resolved_id=$(resolve_monitor_order "$(get_monitors_json)" "$MONITOR_ID" 2>/dev/null || echo "$MONITOR_ID")
+            _single_json=$(get_monitors_json | jq -c --arg id "$_resolved_id" \
                 '[.[] | select((.id | tostring) == $id)]' 2>/dev/null || echo '[]')
+            if [ "$_single_json" = "[]" ] || [ -z "$_single_json" ]; then
+                _single_json=$(get_monitors_json | jq -c --arg id "$MONITOR_ID" \
+                    '[.[] | select((.id | tostring) == $id or (.desc == $id) or ((.desc // "") | ascii_downcase | contains($id | ascii_downcase)))]' 2>/dev/null || echo '[]')
+            fi
             _SINGLE_X=$(printf '%s' "$_single_json" | jq '[.[].x] | min // empty' 2>/dev/null || true)
             _SINGLE_Y=$(printf '%s' "$_single_json" | jq '[.[].y] | min // empty' 2>/dev/null || true)
             # PREFERRED_WS is a STATIC profile key — but the user's
@@ -1077,15 +1082,22 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
             # panel itself. Indirect expansion: key name is MONITOR_<id>, not
             # a value — `${!_mres_key:-}` is the standard bash idiom for
             # reading a dynamically-named variable, safe under `set -u`.
-            _mres_key="MONITOR_${MONITOR_ID}"
-            _mres_val="${!_mres_key:-}"
+            _mres_val=""
+            if [[ "${_resolved_id:-}" =~ ^[0-9a-zA-Z_]+$ ]]; then
+                _mres_key="MONITOR_${_resolved_id}"
+                _mres_val="${!_mres_key:-}"
+            fi
+            if [ -z "$_mres_val" ] && [[ "${MONITOR_ID}" =~ ^[0-9a-zA-Z_]+$ ]]; then
+                _mres_key="MONITOR_${MONITOR_ID}"
+                _mres_val="${!_mres_key:-}"
+            fi
             if [[ "$_mres_val" =~ ^([0-9]+)x([0-9]+)$ ]]; then
                 _SINGLE_W="${BASH_REMATCH[1]}"
                 _SINGLE_H="${BASH_REMATCH[2]}"
                 MON_FLAGS=("/size:${_SINGLE_W}x${_SINGLE_H}" "+dynamic-resolution")
                 log_event "INFO" "Modo single-monitor: MONITOR_ID=${MONITOR_ID} limita el canvas RDP a ${_SINGLE_W}x${_SINGLE_H} (resolución real del monitor sin cambios)."
             fi
-            unset _mres_key _mres_val
+            unset _mres_key _mres_val _resolved_id
         fi
         log_event "INFO" "Modo single-monitor (+dynamic-resolution, floating, redimensionable entre monitores)."
         ;;

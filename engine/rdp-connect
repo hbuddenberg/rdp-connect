@@ -1048,7 +1048,7 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         # by parse_env_safe (existing profiles must not break) but are no
         # longer consulted here — dynamic+floating is unconditional now.
         fs_flag=()
-        [ "${FULLSCREEN:-1}" = "1" ] && fs_flag=("/f")
+        [ "${COMPOSITOR:-none}" = "none" ] && [ "${FULLSCREEN:-1}" = "1" ] && fs_flag=("/f")
         MON_FLAGS=("${fs_flag[@]}" "+dynamic-resolution")
         # MONITOR_ID (revived — the pre-connect checkbox menu is the only
         # writer of this key now): when set, position the window on that
@@ -1290,11 +1290,11 @@ _gfx_flag=""
 case "$_eff_client" in
     sdl)
         _RDP_CLIENT=sdl-freerdp3
-        export FREERDP_WLROOTS_HACK=force
+        export FREERDP_WLROOTS_HACK=1
         export SDL_VIDEODRIVER=wayland
-        CLIENT_FLAGS=("+grab-keyboard" "/mouse-motion" "/bpp:16")
-        _gfx_flag=""   # no /gfx for SDL — bitmap rendering (lighter than H.264)
-        log_event "INFO" "Cliente SDL (sdl-freerdp3). Multimon + sin gfx (bitmap)."
+        CLIENT_FLAGS=("+grab-keyboard" "/mouse-motion")
+        _gfx_flag=""   # no /gfx for SDL — bitmap rendering
+        log_event "INFO" "Cliente SDL (sdl-freerdp3). Multimon + dynamic-resolution (32bpp)."
         ;;
     wayland|wl)
         _RDP_CLIENT=wlfreerdp3

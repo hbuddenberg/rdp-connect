@@ -1047,7 +1047,7 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         # DYNAMIC_RESOLUTION_OVERRIDE/MONITOR_ID/MONITOR_<id> are kept accepted
         # by parse_env_safe (existing profiles must not break) but are no
         # longer consulted here — dynamic+floating is unconditional now.
-        local fs_flag=()
+        fs_flag=()
         [ "${FULLSCREEN:-1}" = "1" ] && fs_flag=("/f")
         MON_FLAGS=("${fs_flag[@]}" "+dynamic-resolution")
         # MONITOR_ID (revived — the pre-connect checkbox menu is the only

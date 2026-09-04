@@ -855,7 +855,7 @@ if [ -z "${MONITOR_MODE_OVERRIDE:-}" ] && [ "${COMPOSITOR:-}" != "none" ] && { c
             # token (survives reboots — see resolve_monitor_order).
             _pm_order=$(printf '%s' "$_pm_json" | jq -r --arg ids "$(IFS=,; echo "${!_pm_checked[*]}")" \
                 '($ids | split(",")) as $sel
-                 | [.[] | select(($sel | index((.id | tostring))) != null)]
+                 | map(select(.id as $id | $sel | index($id | tostring) != null))
                  | sort_by(.x) | [.[].desc] | join(",")' 2>/dev/null || true)
             if [ -n "${_pm_order:-}" ]; then
                 MONITOR_MODE=span
@@ -1259,7 +1259,7 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         # niri output names both work through the same expression.
         _span_json=$(get_monitors_json | jq -c --arg ids "$_span_ids" \
             '($ids | split(",")) as $sel
-             | [.[] | select(($sel | index((.id | tostring))) != null)]' 2>/dev/null || true)
+             | map(select(.id as $id | $sel | index($id | tostring) != null))' 2>/dev/null || true)
         # _SPAN_W/_SPAN_H (uppercase, like _SPAN_X/_SPAN_Y) persist to the
         # background dispatcher subshell for the resize dispatch.
         #
@@ -1284,7 +1284,13 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
             log_event "INFO" "Modo span: monitores [$_span_ids] -> canvas ${_SPAN_W}x${_SPAN_H} en (${_SPAN_X},${_SPAN_Y}), +dynamic-resolution."
         else
             log_event "WARN" "Modo span: no se pudo calcular el canvas (compositor/jq). Fallback a multi-monitor."
-            build_mon_flags "$MON_COUNT" "$_MON_IDS"
+            if [ "${_eff_client:-x11}" = "sdl" ]; then
+                MON_FLAGS=("/multimon" "/f" "+dynamic-resolution")
+                _MULTI_IDS="$_MON_IDS"
+            else
+                build_mon_flags "$MON_COUNT" "$_MON_IDS"
+                _MULTI_IDS="$_MON_IDS"
+            fi
             _EFF_MODE=multi
         fi
         unset _order _span_ids _span_json
@@ -1337,7 +1343,7 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         # Canonical selection: ids match as STRINGS (D3), same as span.
         _multi_json=$(get_monitors_json | jq -c --arg ids "$_MULTI_IDS" \
             '($ids | split(",")) as $sel
-             | [.[] | select(($sel | index((.id | tostring))) != null)]' 2>/dev/null || true)
+             | map(select(.id as $id | $sel | index($id | tostring) != null))' 2>/dev/null || true)
         _MULTI_X=$(printf '%s' "${_multi_json:-[]}" | jq '[.[].x] | min // 0' 2>/dev/null || echo 0)
         _MULTI_Y=$(printf '%s' "${_multi_json:-[]}" | jq '[.[].y] | min // 0' 2>/dev/null || echo 0)
         unset _multi_json

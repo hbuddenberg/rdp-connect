@@ -12,7 +12,7 @@ TESTS_DIR := tests
 
 .DEFAULT_GOAL := help
 
-.PHONY: help test lint install smoke verify-manifest ci
+.PHONY: help test lint install smoke verify-manifest ci sync
 
 # Default goal — lists the canonical entry points (CI invokes `ci` directly).
 help:
@@ -21,6 +21,7 @@ help:
 	@echo "  make test             Run the bats suite (tests/*.bats)"
 	@echo "  make lint             shellcheck --severity=warning on all scripts"
 	@echo "  make install          Delegate to ./install-rdp-framework.sh"
+	@echo "  make sync             Deploy locally and sync Chezmoi dotfiles"
 	@echo "  make smoke            Install + throwaway-HOME rdp-connect --help"
 	@echo "  make verify-manifest  sha256sum -c the installer manifest"
 	@echo "  make ci               lint + test (run by GitHub Actions)"
@@ -58,6 +59,10 @@ lint:
 # Idempotent install. Delegates to the installer with no other side effect.
 install:
 	./install-rdp-framework.sh
+
+# Sync pipeline. Deploys locally and synchronizes Chezmoi dotfiles.
+sync:
+	./sync-system.sh
 
 # Post-install smoke. Throwaway HOME proves the engine binary is on PATH and
 # parses (--help exits 0 at engine L40, BEFORE require_cmd at L47, so this

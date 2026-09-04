@@ -49,6 +49,12 @@ MONITOR_ORDER_OVERRIDE=""       # --monitor-order <ids>  (multi: explicit id ord
 DYNAMIC_RESOLUTION_OVERRIDE=""  # --dynamic-resolution  (single: +dynamic-resolution)
 _EDIT_PROFILE=""                # --edit <profile> (edit profile and exit)
 _DELETE_PROFILE=""              # --delete <profile> (delete profile and exit)
+_SAVE_PROFILE=""                # --save-profile <profile> (save/update profile and exit)
+_RENAME_FROM=""                 # --rename-from <profile> (rename profile during save)
+_SET_HOST=""
+_SET_USER=""
+_SET_PASS=""
+_SET_DOMAIN=""
 _new_args=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -63,6 +69,12 @@ while [ $# -gt 0 ]; do
         --client)             _client_override="${2:-}"; shift; shift || true ;;
         --edit)               _EDIT_PROFILE="${2:-}"; shift; shift || true ;;
         --delete|--rm)        _DELETE_PROFILE="${2:-}"; shift; shift || true ;;
+        --save-profile|--save) _SAVE_PROFILE="${2:-}"; shift; shift || true ;;
+        --rename-from)        _RENAME_FROM="${2:-}"; shift; shift || true ;;
+        --host)               _SET_HOST="${2:-}"; shift; shift || true ;;
+        --user)               _SET_USER="${2:-}"; shift; shift || true ;;
+        --pass)               _SET_PASS="${2:-}"; shift; shift || true ;;
+        --domain)             _SET_DOMAIN="${2:-}"; shift; shift || true ;;
         *)                    _new_args+=("$1"); shift ;;
     esac
 done
@@ -425,7 +437,78 @@ if [ -n "$_DELETE_PROFILE" ]; then
     fi
 
     rm -f "$TARGET_FILE"
+    rm -f "$HOME/.dotfiles/dot_config/private_rdp/private_profiles/private_${_DELETE_PROFILE}.env" 2>/dev/null || true
     echo "Perfil '${_DELETE_PROFILE}' eliminado correctamente."
+    exit 0
+fi
+
+# --- MODO GUARDAR/ACTUALIZAR PERFIL: rdp-connect --save-profile <perfil> ---
+if [ -n "$_SAVE_PROFILE" ]; then
+    TARGET_FILE="$PROFILES_DIR/${_SAVE_PROFILE}.env"
+
+    if [ -n "$_RENAME_FROM" ] && [ "$_RENAME_FROM" != "$_SAVE_PROFILE" ]; then
+        OLD_FILE="$PROFILES_DIR/${_RENAME_FROM}.env"
+        if [ -f "$OLD_FILE" ]; then
+            mv -f "$OLD_FILE" "$TARGET_FILE"
+            rm -f "$HOME/.dotfiles/dot_config/private_rdp/private_profiles/private_${_RENAME_FROM}.env" 2>/dev/null || true
+        fi
+    fi
+
+    if [ ! -f "$TARGET_FILE" ]; then
+        if [ -f "$HOME/.config/rdp/template.env" ]; then
+            cp "$HOME/.config/rdp/template.env" "$TARGET_FILE"
+        else
+            cat > "$TARGET_FILE" << 'EOF'
+HOST=""
+DOMAIN=""
+USER_RDP=""
+PASS_RDP=""
+VPN_CHECK=""
+PREFERRED_WS="3"
+LANG_OVERRIDE=""
+AUDIO_REDIRECT=1
+DRIVE_REDIRECT=1
+CLIPBOARD_SYNC=1
+CLIENT="x11"
+FULLSCREEN=1
+EOF
+        fi
+        chmod 600 "$TARGET_FILE"
+    fi
+
+    python3 -c '
+import sys, re
+
+path = sys.argv[1]
+updates = {
+    "HOST": sys.argv[2],
+    "USER_RDP": sys.argv[3],
+    "PASS_RDP": sys.argv[4],
+    "DOMAIN": sys.argv[5],
+}
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+except Exception:
+    content = ""
+
+q = chr(34)
+for k, v in updates.items():
+    pattern = rf"^({re.escape(k)}=).*"
+    replacement = rf"\g<1>{q}{v}{q}"
+    content, count = re.subn(pattern, replacement, content, flags=re.MULTILINE)
+    if count == 0:
+        if content and not content.endswith("\n"):
+            content += "\n"
+        content += f"{k}={q}{v}{q}\n"
+
+with open(path, "w", encoding="utf-8") as f:
+    f.write(content)
+' "$TARGET_FILE" "${_SET_HOST:-}" "${_SET_USER:-}" "${_SET_PASS:-}" "${_SET_DOMAIN:-}"
+
+    chmod 600 "$TARGET_FILE"
+    echo "Perfil '${_SAVE_PROFILE}' guardado correctamente."
     exit 0
 fi
 
@@ -460,10 +543,12 @@ run_quickshell_selector() {
     local p_entries=()
     for _pf in "$PROFILES_DIR"/*.env; do
         [ -f "$_pf" ] || continue
-        local _pn _ph _pu _pa _pc _pd _pusb _pweb _m_ord _m_arr
+        local _pn _ph _pu _ppass _pdom _pa _pc _pd _pusb _pweb _m_ord _m_arr
         _pn=$(basename "$_pf" .env)
         _ph=$(grep -m1 '^HOST=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
         _pu=$(grep -m1 '^USER_RDP=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
+        _ppass=$(grep -m1 '^PASS_RDP=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
+        _pdom=$(grep -m1 '^DOMAIN=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
         _pa=$(grep -m1 '^AUDIO_REDIRECT=' "$_pf" 2>/dev/null | cut -d= -f2- | tr -cd '0-9' || echo "1")
         _pc=$(grep -m1 '^CLIPBOARD_SYNC=' "$_pf" 2>/dev/null | cut -d= -f2- | tr -cd '0-9' || echo "1")
         _pd=$(grep -m1 '^DRIVE_REDIRECT=' "$_pf" 2>/dev/null | cut -d= -f2- | tr -cd '0-9' || echo "1")
@@ -484,6 +569,8 @@ run_quickshell_selector() {
             --arg name "$_pn" \
             --arg host "$_ph" \
             --arg user "$_pu" \
+            --arg pass "$_ppass" \
+            --arg domain "$_pdom" \
             --arg client "$_pclient" \
             --argjson fullscreen "${_pfs:-1}" \
             --argjson audio "${_pa:-1}" \
@@ -492,7 +579,7 @@ run_quickshell_selector() {
             --argjson usb "${_pusb:-0}" \
             --argjson webcam "${_pweb:-0}" \
             --argjson monitors "${_m_arr}" \
-            '{name: $name, host: $host, user: $user, client: $client, fullscreen: $fullscreen, audio: $audio, clipboard: $clipboard, drive: $drive, usb: $usb, webcam: $webcam, monitors: $monitors}')" )
+            '{name: $name, host: $host, user: $user, pass: $pass, domain: $domain, client: $client, fullscreen: $fullscreen, audio: $audio, clipboard: $clipboard, drive: $drive, usb: $usb, webcam: $webcam, monitors: $monitors}')" )
     done
 
     local profiles_json="[]"

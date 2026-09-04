@@ -55,7 +55,9 @@ PanelWindow {
     property string profileToDelete: ""
     property bool showDeleteConfirm: false
 
-    // New connection modal state
+    // Connection modal state (create / edit)
+    property bool isEditMode: false
+    property string editingOriginalName: ""
     property bool showNewConnectionModal: false
     property string newConnErrorText: ""
 
@@ -155,10 +157,7 @@ PanelWindow {
 
     function executeDeleteProfile(name) {
         root.showDeleteConfirm = false;
-        deleteProfileProc.command = [
-            "bash", "-c",
-            "rm -f \"$HOME/.config/rdp/profiles/" + name + ".env\" \"$HOME/.dotfiles/dot_config/private_rdp/private_profiles/private_" + name + ".env\" 2>/dev/null || true"
-        ];
+        deleteProfileProc.command = ["rdp-connect", "--delete", name];
         deleteProfileProc.running = true;
 
         var updated = [];
@@ -178,11 +177,35 @@ PanelWindow {
     }
 
     function openNewConnectionDialog() {
+        root.isEditMode = false;
+        root.editingOriginalName = "";
         root.newConnErrorText = "";
+        newNameInput.text = "";
+        newHostInput.text = "";
+        newUserInput.text = "";
+        newPassInput.text = "";
+        newDomainInput.text = "";
+        passFieldRect.showPass = false;
         root.showNewConnectionModal = true;
+        newNameInput.forceActiveFocus();
     }
 
-    function saveNewConnection(name, host, user, pass, domain) {
+    function openEditConnectionDialog(profile) {
+        if (!profile) return;
+        root.isEditMode = true;
+        root.editingOriginalName = profile.name || "";
+        root.newConnErrorText = "";
+        newNameInput.text = profile.name || "";
+        newHostInput.text = profile.host || "";
+        newUserInput.text = profile.user || "";
+        newPassInput.text = profile.pass || "";
+        newDomainInput.text = profile.domain || "";
+        passFieldRect.showPass = false;
+        root.showNewConnectionModal = true;
+        newHostInput.forceActiveFocus();
+    }
+
+    function saveConnection(isEdit, origName, name, host, user, pass, domain) {
         var cleanName = (name || "").trim().replace(/[^a-zA-Z0-9_-]/g, "_");
         var cleanHost = (host || "").trim();
         var cleanUser = (user || "").trim();
@@ -195,50 +218,74 @@ PanelWindow {
         }
 
         for (var i = 0; i < root.profiles.length; i++) {
+            if (isEdit && root.profiles[i].name === origName) {
+                continue;
+            }
             if (root.profiles[i].name === cleanName) {
                 root.newConnErrorText = "Ya existe un perfil con ese nombre.";
                 return false;
             }
         }
 
-        var content = 'HOST="' + cleanHost + '"\n' +
-                      'DOMAIN="' + cleanDomain + '"\n' +
-                      'USER_RDP="' + cleanUser + '"\n' +
-                      'PASS_RDP="' + cleanPass + '"\n' +
-                      'VPN_CHECK=""\n' +
-                      'PREFERRED_WS="3"\n' +
-                      'LANG_OVERRIDE=""\n\n' +
-                      'AUDIO_REDIRECT=1\n' +
-                      'DRIVE_REDIRECT=1\n' +
-                      'CLIPBOARD_SYNC=1\n' +
-                      'CLIENT="x11"\n' +
-                      'FULLSCREEN=1\n';
-
-        saveProfileProc.command = [
-            "bash", "-c",
-            "mkdir -p \"$HOME/.config/rdp/profiles\" && cat > \"$HOME/.config/rdp/profiles/" + cleanName + ".env\" << 'EOF'\n" + content + "EOF\nchmod 600 \"$HOME/.config/rdp/profiles/" + cleanName + ".env\"\n"
+        var cmd = [
+            "rdp-connect",
+            "--save-profile", cleanName,
+            "--host", cleanHost,
+            "--user", cleanUser,
+            "--pass", cleanPass,
+            "--domain", cleanDomain
         ];
+        if (isEdit && origName && origName !== cleanName) {
+            cmd.push("--rename-from", origName);
+        }
+
+        saveProfileProc.command = cmd;
         saveProfileProc.running = true;
 
-        var newObj = {
-            name: cleanName,
-            host: cleanHost,
-            user: cleanUser,
-            client: "x11",
-            fullscreen: 1,
-            audio: 1,
-            clipboard: 1,
-            drive: 1,
-            usb: 0,
-            webcam: 0,
-            monitors: []
-        };
-
-        var updatedList = root.profiles.slice();
-        updatedList.push(newObj);
-        root.profiles = updatedList;
-        root.showNewConnectionModal = false;
-        root.selectProfile(updatedList.length - 1);
+        if (isEdit) {
+            var updatedList = root.profiles.slice();
+            var targetIdx = -1;
+            for (var j = 0; j < updatedList.length; j++) {
+                if (updatedList[j].name === origName) {
+                    var updatedItem = Object.assign({}, updatedList[j], {
+                        name: cleanName,
+                        host: cleanHost,
+                        user: cleanUser,
+                        pass: cleanPass,
+                        domain: cleanDomain
+                    });
+                    updatedList[j] = updatedItem;
+                    targetIdx = j;
+                    break;
+                }
+            }
+            root.profiles = updatedList;
+            root.showNewConnectionModal = false;
+            if (targetIdx >= 0) {
+                root.selectProfile(targetIdx);
+            }
+        } else {
+            var newObj = {
+                name: cleanName,
+                host: cleanHost,
+                user: cleanUser,
+                pass: cleanPass,
+                domain: cleanDomain,
+                client: "x11",
+                fullscreen: 1,
+                audio: 1,
+                clipboard: 1,
+                drive: 1,
+                usb: 0,
+                webcam: 0,
+                monitors: []
+            };
+            var updatedList = root.profiles.slice();
+            updatedList.push(newObj);
+            root.profiles = updatedList;
+            root.showNewConnectionModal = false;
+            root.selectProfile(updatedList.length - 1);
+        }
         return true;
     }
 
@@ -476,6 +523,35 @@ PanelWindow {
                                         font.pixelSize: 11
                                         color: root.colMuted
                                         elide: Text.ElideRight
+                                    }
+                                }
+
+                                // Edit Profile Button
+                                Rectangle {
+                                    id: btnEdit
+                                    Layout.preferredWidth: 28
+                                    Layout.preferredHeight: 28
+                                    Layout.alignment: Qt.AlignVCenter
+                                    radius: 4
+                                    color: editHover.hovered ? "#1d2e2b" : "transparent"
+                                    border.color: editHover.hovered ? root.colAccent : "transparent"
+                                    border.width: 1
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: "󰏫"
+                                        font.pixelSize: 14
+                                        color: editHover.hovered ? root.colAccent : root.colMuted
+                                    }
+
+                                    HoverHandler { id: editHover }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            root.openEditConnectionDialog(modelData);
+                                        }
                                     }
                                 }
 
@@ -781,15 +857,24 @@ PanelWindow {
                 }
             }
 
+            // Footer Separator
+            Rectangle {
+                Layout.fillWidth: true
+                height: 1
+                color: root.colBorder
+            }
+
             // Footer Actions
             RowLayout {
                 Layout.fillWidth: true
+                Layout.preferredHeight: 38
                 spacing: 12
 
                 // Create Connection Button (Bottom Left)
                 Rectangle {
-                    width: 160
-                    height: 38
+                    Layout.preferredWidth: 155
+                    Layout.preferredHeight: 38
+                    Layout.alignment: Qt.AlignVCenter
                     radius: 4
                     color: btnNewHover.hovered ? "#1b2522" : root.colCard
                     border.color: root.colAccent
@@ -799,7 +884,7 @@ PanelWindow {
                         anchors.centerIn: parent
                         spacing: 8
                         Text { text: "󰐕"; font.pixelSize: 15; color: root.colAccent }
-                        Text { text: "Nueva Conexión"; font.pixelSize: 13; font.bold: true; color: root.colAccent }
+                        Text { text: "Crear Conexión"; font.pixelSize: 13; font.bold: true; color: root.colAccent }
                     }
 
                     HoverHandler { id: btnNewHover }
@@ -814,8 +899,9 @@ PanelWindow {
 
                 // Cancel Button
                 Rectangle {
-                    width: 110
-                    height: 38
+                    Layout.preferredWidth: 110
+                    Layout.preferredHeight: 38
+                    Layout.alignment: Qt.AlignVCenter
                     radius: 4
                     color: btnCancelHover.hovered ? "#222a28" : root.colCard
                     border.color: root.colBorder
@@ -831,14 +917,16 @@ PanelWindow {
                     HoverHandler { id: btnCancelHover }
                     MouseArea {
                         anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
                         onClicked: root.doCancel()
                     }
                 }
 
                 // Connect Button
                 Rectangle {
-                    width: 140
-                    height: 38
+                    Layout.preferredWidth: 140
+                    Layout.preferredHeight: 38
+                    Layout.alignment: Qt.AlignVCenter
                     radius: 4
                     color: btnConnHover.hovered ? Qt.lighter(root.colAccent, 1.1) : root.colAccent
 
@@ -852,6 +940,7 @@ PanelWindow {
                     HoverHandler { id: btnConnHover }
                     MouseArea {
                         anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
                         onClicked: root.doConnect()
                     }
                 }
@@ -972,18 +1061,6 @@ PanelWindow {
             radius: 4
             z: 100
 
-            onVisibleChanged: {
-                if (visible) {
-                    newNameInput.text = "";
-                    newHostInput.text = "";
-                    newUserInput.text = "";
-                    newPassInput.text = "";
-                    newDomainInput.text = "";
-                    root.newConnErrorText = "";
-                    newNameInput.forceActiveFocus();
-                }
-            }
-
             MouseArea {
                 anchors.fill: parent
                 onClicked: {}
@@ -1008,20 +1085,20 @@ PanelWindow {
                         spacing: 10
 
                         Text {
-                            text: "󰐕"
+                            text: root.isEditMode ? "󰏫" : "󰐕"
                             font.pixelSize: 20
                             color: root.colAccent
                         }
                         ColumnLayout {
                             spacing: 2
                             Text {
-                                text: "Nueva Conexión RDP"
+                                text: root.isEditMode ? "Editar Conexión RDP" : "Nueva Conexión RDP"
                                 font.pixelSize: 16
                                 font.bold: true
                                 color: root.colFg
                             }
                             Text {
-                                text: "Configuración básica del perfil"
+                                text: root.isEditMode ? "Modifica los campos básicos del perfil" : "Configuración básica del perfil"
                                 font.pixelSize: 11
                                 color: root.colMuted
                             }
@@ -1249,7 +1326,7 @@ PanelWindow {
                                         echoMode: passFieldRect.showPass ? TextInput.Normal : TextInput.Password
                                         selectByMouse: true
                                         clip: true
-                                        Keys.onReturnPressed: root.saveNewConnection(newNameInput.text, newHostInput.text, newUserInput.text, newPassInput.text, newDomainInput.text)
+                                        Keys.onReturnPressed: root.saveConnection(root.isEditMode, root.editingOriginalName, newNameInput.text, newHostInput.text, newUserInput.text, newPassInput.text, newDomainInput.text)
                                         Text {
                                             anchors.fill: parent
                                             verticalAlignment: Text.AlignVCenter
@@ -1324,13 +1401,13 @@ PanelWindow {
                                 anchors.centerIn: parent
                                 spacing: 6
                                 Text { text: "󰄬"; font.pixelSize: 13; color: "#000000" }
-                                Text { text: "Crear Perfil"; font.pixelSize: 12; font.bold: true; color: "#000000" }
+                                Text { text: root.isEditMode ? "Guardar Cambios" : "Crear Perfil"; font.pixelSize: 12; font.bold: true; color: "#000000" }
                             }
                             HoverHandler { id: saveNewHover }
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: root.saveNewConnection(newNameInput.text, newHostInput.text, newUserInput.text, newPassInput.text, newDomainInput.text)
+                                onClicked: root.saveConnection(root.isEditMode, root.editingOriginalName, newNameInput.text, newHostInput.text, newUserInput.text, newPassInput.text, newDomainInput.text)
                             }
                         }
                     }

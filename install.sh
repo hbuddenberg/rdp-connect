@@ -152,11 +152,10 @@ detect_install_mode() {
 }
 
 elevated_cp() {
-    local src="$1" dest="$2"
     if [[ "${INSTALL_MODE}" == "system" ]] && [[ "$(id -u)" -ne 0 ]]; then
-        sudo cp "$src" "$dest"
+        sudo cp "$@"
     else
-        cp "$src" "$dest"
+        cp "$@"
     fi
 }
 

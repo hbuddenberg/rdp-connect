@@ -48,6 +48,7 @@ MONITORS_OVERRIDE=""            # --monitors <n>   (multi: use first N detected)
 MONITOR_ORDER_OVERRIDE=""       # --monitor-order <ids>  (multi: explicit id order)
 DYNAMIC_RESOLUTION_OVERRIDE=""  # --dynamic-resolution  (single: +dynamic-resolution)
 _EDIT_PROFILE=""                # --edit <profile> (edit profile and exit)
+_DELETE_PROFILE=""              # --delete <profile> (delete profile and exit)
 _new_args=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -61,6 +62,7 @@ while [ $# -gt 0 ]; do
         --monitor-order)      MONITOR_ORDER_OVERRIDE="${2:-}"; shift; shift || true ;;
         --client)             _client_override="${2:-}"; shift; shift || true ;;
         --edit)               _EDIT_PROFILE="${2:-}"; shift; shift || true ;;
+        --delete|--rm)        _DELETE_PROFILE="${2:-}"; shift; shift || true ;;
         *)                    _new_args+=("$1"); shift ;;
     esac
 done
@@ -99,6 +101,7 @@ ${C_BOLD}Usage:${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}<profile>${C_R}                        ${C_DIM}Direct connection to a profile${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--new${C_R} ${C_KEY}<name>${C_R}                   ${C_DIM}Create a new profile from template${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--edit${C_R} ${C_KEY}<profile>${C_R}                 ${C_DIM}Edit a profile in your \$EDITOR${C_R}
+  ${C_CMD}rdp-connect${C_R} ${C_FLAG}--delete${C_R} ${C_KEY}<profile>${C_R}               ${C_DIM}Delete an existing profile${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--update-profiles${C_R}                 ${C_DIM}Add monitor-layout keys to existing profiles${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}--log${C_R} ${C_KEY}<profile>${C_R}                ${C_DIM}Tail the profile's audit log${C_R}
   ${C_CMD}rdp-connect${C_R} ${C_FLAG}-v${C_R} ${C_KEY}<profile>${C_R}                   ${C_DIM}Verbose: milestones + xfreerdp3 output on stderr${C_R}
@@ -410,6 +413,19 @@ if [ -n "$_EDIT_PROFILE" ]; then
     else
         "$SYSTEM_EDITOR" "$TARGET_FILE"
     fi
+    exit 0
+fi
+
+# --- MODO ELIMINAR: rdp-connect --delete <perfil> ---
+if [ -n "$_DELETE_PROFILE" ]; then
+    TARGET_FILE="$PROFILES_DIR/${_DELETE_PROFILE}.env"
+    if [ ! -f "$TARGET_FILE" ]; then
+        echo "Error: El perfil '${_DELETE_PROFILE}' no existe." >&2
+        exit 1
+    fi
+
+    rm -f "$TARGET_FILE"
+    echo "Perfil '${_DELETE_PROFILE}' eliminado correctamente."
     exit 0
 fi
 

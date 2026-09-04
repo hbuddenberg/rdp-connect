@@ -83,6 +83,7 @@ if command -v "$CHEZMOI" &>/dev/null; then
 
         if [[ "$DO_PUSH" == true ]]; then
             echo "==> Pushing dotfiles to remote..."
+            git -C "$DOTFILES_DIR" pull --rebase origin main 2>/dev/null || git -C "$DOTFILES_DIR" pull --rebase origin master 2>/dev/null || true
             git -C "$DOTFILES_DIR" push origin main 2>/dev/null || git -C "$DOTFILES_DIR" push origin master 2>/dev/null || true
         fi
     else

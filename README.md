@@ -9,7 +9,8 @@ Modern RDP connection framework for **Hyprland**, **Niri**, and Wayland desktop 
 
 ## ✨ Features
 
-- **Native Quickshell Modal UI**: Modern Omarchy 4 standalone modal applet with 4px border radius, 2px dynamic accent border, visual profile picker, monitor selector, and hardware feature toggles (Audio, Clipboard, Drive, USB, Webcam).
+- **Native Quickshell Modal UI**: Modern Omarchy standalone modal applet with visual profile picker, monitor selector, hardware feature toggles (Audio, Clipboard, Drive, USB, Webcam), client engine chips (X11, SDL, Wayland), and Fullscreen switch.
+- **Multiple FreeRDP Client Engines**: Support for `xfreerdp3` (XWayland, default), `sdl-freerdp3` (SDL3 with Wayland native dynamic resolution), and `wlfreerdp3` (Wayland native).
 - **Multi-Launcher Support**: Quickshell → Walker → Wofi → Rofi fallback hierarchy.
 - **Multi-Compositor Support**: Native IPC integration with both **Hyprland** (`hyprctl`) and **Niri** (`niri msg`).
 - **Profile-based connections**: Each server is an `.env` file under `~/.config/rdp/profiles/`.
@@ -65,8 +66,11 @@ If `sha256sum -c` reports any file as `FAILED`, re-run `./install-rdp-framework.
 
 | Command | Function |
 |---|---|
-| `rdp-connect` | Open graphical selector (wofi/rofi) |
+| `rdp-connect` | Open graphical selector (Quickshell/Walker/Wofi/Rofi) |
 | `rdp-connect <profile>` | Direct connection to a profile |
+| `rdp-connect --client <x11\|sdl\|wayland> <profile>` | Select FreeRDP client engine |
+| `rdp-connect --single-mon <profile>` | Single-monitor mode (+dynamic-resolution) |
+| `rdp-connect --multi-mon <profile>` | Multi-monitor mode |
 | `rdp-connect --new <name>` | Create a new profile from template |
 | `rdp-connect --log <profile>` | Tail the profile's audit log |
 | `rdp-connect --help` | Show help |

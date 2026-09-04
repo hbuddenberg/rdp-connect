@@ -48,6 +48,7 @@ PanelWindow {
     property bool optDrive: true
     property bool optUsb: false
     property bool optWebcam: false
+    property string optClient: "x11"
 
     // Load data on startup
     FileView {
@@ -92,6 +93,7 @@ PanelWindow {
         root.optDrive = (p.drive !== 0);
         root.optUsb = (p.usb === 1);
         root.optWebcam = (p.webcam === 1);
+        root.optClient = (p.client && p.client.length > 0) ? p.client : "x11";
 
         if (p.monitors && Array.isArray(p.monitors) && p.monitors.length > 0) {
             var m = {};
@@ -116,6 +118,7 @@ PanelWindow {
         var res = {
             action: "connect",
             profile: p.name,
+            client: root.optClient,
             monitors: monList,
             audio: root.optAudio,
             clipboard: root.optClipboard,
@@ -192,7 +195,7 @@ PanelWindow {
         id: mainCard
         anchors.centerIn: parent
         width: 940
-        height: 580
+        height: 630
         radius: 4
         color: root.colBg
         border.color: root.colAccent
@@ -531,6 +534,73 @@ PanelWindow {
                                     Text { text: "󰄀"; font.pixelSize: 15; color: root.colAccent }
                                     Text { text: "Cámara Web"; color: root.colFg; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideNone }
                                     Switch { checked: root.optWebcam; onToggled: root.optWebcam = checked }
+                                }
+                            }
+                        }
+                    }
+
+                    // Separator
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 1
+                        color: root.colBorder
+                    }
+
+                    // FreeRDP Engine Selector
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Text {
+                            text: "MOTOR FREERDP (CLIENTE)"
+                            font.pixelSize: 11
+                            font.bold: true
+                            color: root.colMuted
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Repeater {
+                                model: [
+                                    { id: "x11", label: "X11 (VAAPI / H.264)", icon: "󰍹" },
+                                    { id: "sdl", label: "SDL3 (Wayland)", icon: "󰨇" },
+                                    { id: "wayland", label: "Wayland (wl)", icon: "󰟀" }
+                                ]
+                                delegate: Rectangle {
+                                    id: clientChip
+                                    Layout.fillWidth: true
+                                    height: 36
+                                    radius: 4
+                                    property bool isSelected: root.optClient === modelData.id
+                                    color: isSelected ? root.colAccent : root.colCard
+                                    border.color: isSelected ? root.colAccent : root.colBorder
+                                    border.width: 1
+
+                                    RowLayout {
+                                        anchors.centerIn: parent
+                                        spacing: 8
+                                        Text {
+                                            text: modelData.icon
+                                            font.pixelSize: 13
+                                            color: clientChip.isSelected ? "#000000" : root.colAccent
+                                        }
+                                        Text {
+                                            text: modelData.label
+                                            font.pixelSize: 11
+                                            font.bold: clientChip.isSelected
+                                            color: clientChip.isSelected ? "#000000" : root.colFg
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            root.optClient = modelData.id;
+                                        }
+                                    }
                                 }
                             }
                         }

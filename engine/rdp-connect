@@ -458,18 +458,22 @@ run_quickshell_selector() {
         if [ -n "$_m_ord" ]; then
             _m_arr=$(jq -nc --arg list "$_m_ord" '$list | split(",")' 2>/dev/null || echo '[]')
         fi
+        local _pclient
+        _pclient=$(grep -m1 '^CLIENT=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
+        [ -z "$_pclient" ] && _pclient="x11"
 
         p_entries+=( "$(jq -nc \
             --arg name "$_pn" \
             --arg host "$_ph" \
             --arg user "$_pu" \
+            --arg client "$_pclient" \
             --argjson audio "${_pa:-1}" \
             --argjson clipboard "${_pc:-1}" \
             --argjson drive "${_pd:-1}" \
             --argjson usb "${_pusb:-0}" \
             --argjson webcam "${_pweb:-0}" \
             --argjson monitors "${_m_arr}" \
-            '{name: $name, host: $host, user: $user, audio: $audio, clipboard: $clipboard, drive: $drive, usb: $usb, webcam: $webcam, monitors: $monitors}')" )
+            '{name: $name, host: $host, user: $user, client: $client, audio: $audio, clipboard: $clipboard, drive: $drive, usb: $usb, webcam: $webcam, monitors: $monitors}')" )
     done
 
     local profiles_json="[]"
@@ -500,6 +504,7 @@ run_quickshell_selector() {
             QS_DRIVE=$(jq -r 'if .drive == true then 1 else 0 end' "${result_file}" 2>/dev/null || echo 1)
             QS_USB=$(jq -r 'if .usb == true then 1 else 0 end' "${result_file}" 2>/dev/null || echo 0)
             QS_WEBCAM=$(jq -r 'if .webcam == true then 1 else 0 end' "${result_file}" 2>/dev/null || echo 0)
+            QS_CLIENT=$(jq -r '.client // ""' "${result_file}" 2>/dev/null || true)
             rm -f "${result_file}" "${data_file}" 2>/dev/null || true
             return 0
         fi
@@ -592,6 +597,7 @@ if [ -n "${QS_PROFILE:-}" ]; then
     [ -n "$QS_DRIVE" ] && DRIVE_REDIRECT="$QS_DRIVE" && set_profile_key "$ENV_FILE" "DRIVE_REDIRECT" "$QS_DRIVE"
     [ -n "$QS_USB" ] && USB_REDIRECT="$QS_USB" && set_profile_key "$ENV_FILE" "USB_REDIRECT" "$QS_USB"
     [ -n "$QS_WEBCAM" ] && WEBCAM_REDIRECT="$QS_WEBCAM" && set_profile_key "$ENV_FILE" "WEBCAM_REDIRECT" "$QS_WEBCAM"
+    [ -n "${QS_CLIENT:-}" ] && CLIENT="$QS_CLIENT" && _client_override="$QS_CLIENT" && set_profile_key "$ENV_FILE" "CLIENT" "$QS_CLIENT"
     if [ -n "$QS_MONITORS" ]; then
         MONITOR_ORDER="$QS_MONITORS"
         set_profile_key "$ENV_FILE" "MONITOR_ORDER" "$QS_MONITORS"

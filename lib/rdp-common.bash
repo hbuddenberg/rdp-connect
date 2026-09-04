@@ -344,10 +344,10 @@ build_mon_flags() {
   local count="$1" ids="$2"
   MON_FLAGS=()
   if [ "$count" -gt 1 ]; then
-    MON_FLAGS=("/multimon" "/monitors:$ids")
+    MON_FLAGS=("/multimon" "/monitors:$ids" "/f" "+dynamic-resolution")
   else
     # shellcheck disable=SC2034  # MON_FLAGS consumed by engine/rdp-connect (sourced lib pattern)
-    MON_FLAGS=("/f")
+    MON_FLAGS=("/f" "+dynamic-resolution")
   fi
 }
 

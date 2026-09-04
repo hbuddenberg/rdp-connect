@@ -1042,7 +1042,7 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         # DYNAMIC_RESOLUTION_OVERRIDE/MONITOR_ID/MONITOR_<id> are kept accepted
         # by parse_env_safe (existing profiles must not break) but are no
         # longer consulted here — dynamic+floating is unconditional now.
-        MON_FLAGS=("+dynamic-resolution")
+        MON_FLAGS=("/f" "+dynamic-resolution")
         # MONITOR_ID (revived — the pre-connect checkbox menu is the only
         # writer of this key now): when set, position the window on that
         # monitor's logical origin before fullscreening it. Same
@@ -1100,7 +1100,7 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
             if [[ "$_mres_val" =~ ^([0-9]+)x([0-9]+)$ ]]; then
                 _SINGLE_W="${BASH_REMATCH[1]}"
                 _SINGLE_H="${BASH_REMATCH[2]}"
-                MON_FLAGS=("/size:${_SINGLE_W}x${_SINGLE_H}" "+dynamic-resolution")
+                MON_FLAGS=("/size:${_SINGLE_W}x${_SINGLE_H}" "/f" "+dynamic-resolution")
                 log_event "INFO" "Modo single-monitor: MONITOR_ID=${MONITOR_ID} limita el canvas RDP a ${_SINGLE_W}x${_SINGLE_H} (resolución real del monitor sin cambios)."
             fi
             unset _mres_key _mres_val _resolved_id
@@ -1184,7 +1184,7 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         if [ "${_eff_client:-x11}" = "sdl" ]; then
             # sdl-freerdp3 has its OWN monitor ID scheme (not hyprctl). Don't
             # pass /monitors: — let SDL auto-detect all monitors. Just /multimon.
-            MON_FLAGS=("/multimon")
+            MON_FLAGS=("/multimon" "/f" "+dynamic-resolution")
             _MULTI_IDS="$_MON_IDS"
             log_event "INFO" "Modo multi-monitor (SDL): /multimon (auto-detect)."
         else
@@ -1201,12 +1201,12 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
             _order=""
         fi
         if [ -n "$_order" ]; then
-            MON_FLAGS=("/multimon" "/monitors:$_order")
+            MON_FLAGS=("/multimon" "/monitors:$_order" "/f" "+dynamic-resolution")
             _MULTI_IDS="$_order"
         elif [ -n "${MONITORS_OVERRIDE:-${MONITORS:-}}" ]; then
             _mn="${MONITORS_OVERRIDE:-${MONITORS:-}}"
             _first=$(printf '%s\n' "$_MON_IDS" | tr ',' '\n' | head -n "$_mn" | paste -sd, -)
-            MON_FLAGS=("/multimon" "/monitors:$_first")
+            MON_FLAGS=("/multimon" "/monitors:$_first" "/f" "+dynamic-resolution")
             _MULTI_IDS="$_first"
             unset _first _mn
         else
@@ -1427,13 +1427,11 @@ if [ "${COMPOSITOR:-}" != "none" ]; then
             dispatch_move "${_MULTI_X:-0}" "${_MULTI_Y:-0}"
             log_event "INFO" "Ventana $WM_CLASS multi-monitor: floating y posicionada en (${_MULTI_X:-0},${_MULTI_Y:-0})." 2>/dev/null || true
         fi
+    elif [ "${COMPOSITOR:-}" = "niri" ]; then
+        dispatch_fullscreen
+        log_event "INFO" "Ventana $WM_CLASS fullscreen bajo niri." 2>/dev/null || true
     else
-        # niri: geometry (float/resize/move/fullscreen) waits on the D8 live
-        # gate (PR3 task 3.1: move-floating-window abs-vs-delta, coordinate
-        # space, XWayland app_id↔/wm-class). Workspace pin + focus above are
-        # live-verified and already applied; positioning is NOT fired on
-        # unverified semantics — WARN, never silent breakage.
-        log_event "WARN" "Ventana $WM_CLASS: geometría (float/resize/move/fullscreen) pospuesta bajo niri (gate D8, PR3); workspace y focus aplicados." 2>/dev/null || true
+        log_event "WARN" "Ventana $WM_CLASS: geometría no soportada bajo compositor ${COMPOSITOR}." 2>/dev/null || true
     fi
 ) &
 fi  # end COMPOSITOR != none (D9: no dispatcher subshell under none)

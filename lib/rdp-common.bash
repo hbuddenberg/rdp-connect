@@ -52,6 +52,7 @@ declare -gA _PROFILE_KEYS=(
   [CLIPBOARD_SYNC]=1
   [WEBCAM_REDIRECT]=1
   [DISABLE_DPI]=1
+  [FULLSCREEN]=1
 )
 
 # ---------------------------------------------------------------------------
@@ -343,11 +344,13 @@ require_cmd() {
 build_mon_flags() {
   local count="$1" ids="$2"
   MON_FLAGS=()
+  local fs_flag=()
+  [ "${FULLSCREEN:-1}" = "1" ] && fs_flag=("/f")
   if [ "$count" -gt 1 ]; then
-    MON_FLAGS=("/multimon" "/monitors:$ids" "/f" "+dynamic-resolution")
+    MON_FLAGS=("/multimon" "/monitors:$ids" "${fs_flag[@]}" "+dynamic-resolution")
   else
     # shellcheck disable=SC2034  # MON_FLAGS consumed by engine/rdp-connect (sourced lib pattern)
-    MON_FLAGS=("/f" "+dynamic-resolution")
+    MON_FLAGS=("${fs_flag[@]}" "+dynamic-resolution")
   fi
 }
 

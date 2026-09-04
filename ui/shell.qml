@@ -49,6 +49,7 @@ PanelWindow {
     property bool optUsb: false
     property bool optWebcam: false
     property string optClient: "x11"
+    property bool optFullscreen: true
 
     // Load data on startup
     FileView {
@@ -93,6 +94,7 @@ PanelWindow {
         root.optDrive = (p.drive !== 0);
         root.optUsb = (p.usb === 1);
         root.optWebcam = (p.webcam === 1);
+        root.optFullscreen = (p.fullscreen !== 0);
         root.optClient = (p.client && p.client.length > 0) ? p.client : "x11";
 
         if (p.monitors && Array.isArray(p.monitors) && p.monitors.length > 0) {
@@ -119,6 +121,7 @@ PanelWindow {
             action: "connect",
             profile: p.name,
             client: root.optClient,
+            fullscreen: root.optFullscreen,
             monitors: monList,
             audio: root.optAudio,
             clipboard: root.optClipboard,
@@ -534,6 +537,24 @@ PanelWindow {
                                     Text { text: "󰄀"; font.pixelSize: 15; color: root.colAccent }
                                     Text { text: "Cámara Web"; color: root.colFg; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideNone }
                                     Switch { checked: root.optWebcam; onToggled: root.optWebcam = checked }
+                                }
+                            }
+
+                            // Fullscreen Switch
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 44
+                                radius: 4
+                                color: root.colCard
+                                border.color: root.colBorder
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 12
+                                    anchors.rightMargin: 12
+                                    spacing: 10
+                                    Text { text: "󰍺"; font.pixelSize: 15; color: root.colAccent }
+                                    Text { text: "Pantalla Completa"; color: root.colFg; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideNone }
+                                    Switch { checked: root.optFullscreen; onToggled: root.optFullscreen = checked }
                                 }
                             }
                         }

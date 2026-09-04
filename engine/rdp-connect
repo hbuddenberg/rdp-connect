@@ -458,22 +458,25 @@ run_quickshell_selector() {
         if [ -n "$_m_ord" ]; then
             _m_arr=$(jq -nc --arg list "$_m_ord" '$list | split(",")' 2>/dev/null || echo '[]')
         fi
-        local _pclient
+        local _pclient _pfs
         _pclient=$(grep -m1 '^CLIENT=' "$_pf" 2>/dev/null | cut -d= -f2- | sed 's/^"//; s/" *#.*//; s/"$//' || true)
         [ -z "$_pclient" ] && _pclient="x11"
+        _pfs=$(grep -m1 '^FULLSCREEN=' "$_pf" 2>/dev/null | cut -d= -f2- | tr -cd '0-9' || echo "1")
+        [ -z "$_pfs" ] && _pfs="1"
 
         p_entries+=( "$(jq -nc \
             --arg name "$_pn" \
             --arg host "$_ph" \
             --arg user "$_pu" \
             --arg client "$_pclient" \
+            --argjson fullscreen "${_pfs:-1}" \
             --argjson audio "${_pa:-1}" \
             --argjson clipboard "${_pc:-1}" \
             --argjson drive "${_pd:-1}" \
             --argjson usb "${_pusb:-0}" \
             --argjson webcam "${_pweb:-0}" \
             --argjson monitors "${_m_arr}" \
-            '{name: $name, host: $host, user: $user, client: $client, audio: $audio, clipboard: $clipboard, drive: $drive, usb: $usb, webcam: $webcam, monitors: $monitors}')" )
+            '{name: $name, host: $host, user: $user, client: $client, fullscreen: $fullscreen, audio: $audio, clipboard: $clipboard, drive: $drive, usb: $usb, webcam: $webcam, monitors: $monitors}')" )
     done
 
     local profiles_json="[]"
@@ -505,6 +508,7 @@ run_quickshell_selector() {
             QS_USB=$(jq -r 'if .usb == true then 1 else 0 end' "${result_file}" 2>/dev/null || echo 0)
             QS_WEBCAM=$(jq -r 'if .webcam == true then 1 else 0 end' "${result_file}" 2>/dev/null || echo 0)
             QS_CLIENT=$(jq -r '.client // ""' "${result_file}" 2>/dev/null || true)
+            QS_FULLSCREEN=$(jq -r 'if .fullscreen == false then 0 else 1 end' "${result_file}" 2>/dev/null || echo 1)
             rm -f "${result_file}" "${data_file}" 2>/dev/null || true
             return 0
         fi
@@ -564,7 +568,7 @@ ENV_FILE="$PROFILES_DIR/${PROFILE}.env"
 HOST="" USER_RDP="" PASS_RDP="" DOMAIN=""
 VPN_CHECK="" PREFERRED_WS="" LANG_OVERRIDE=""
 # shellcheck disable=SC2034  # pre-init for set -u safety; consumed by build_*_flags fns
-USB_REDIRECT="" USB_DEVICE_IDS="" DRIVE_REDIRECT="" SHARE_DIR="" CLIPBOARD_SYNC="" WEBCAM_REDIRECT="" DISABLE_DPI=""
+USB_REDIRECT="" USB_DEVICE_IDS="" DRIVE_REDIRECT="" SHARE_DIR="" CLIPBOARD_SYNC="" WEBCAM_REDIRECT="" DISABLE_DPI="" FULLSCREEN=""
 
 # Carga segura de variables — abort on parser failure (F3 security boundary).
 # parse_env_safe prints 'parse_env_safe: <file>:<line>: <reason>' to stderr;
@@ -598,6 +602,7 @@ if [ -n "${QS_PROFILE:-}" ]; then
     [ -n "$QS_USB" ] && USB_REDIRECT="$QS_USB" && set_profile_key "$ENV_FILE" "USB_REDIRECT" "$QS_USB"
     [ -n "$QS_WEBCAM" ] && WEBCAM_REDIRECT="$QS_WEBCAM" && set_profile_key "$ENV_FILE" "WEBCAM_REDIRECT" "$QS_WEBCAM"
     [ -n "${QS_CLIENT:-}" ] && CLIENT="$QS_CLIENT" && _client_override="$QS_CLIENT" && set_profile_key "$ENV_FILE" "CLIENT" "$QS_CLIENT"
+    [ -n "${QS_FULLSCREEN:-}" ] && FULLSCREEN="$QS_FULLSCREEN" && set_profile_key "$ENV_FILE" "FULLSCREEN" "$QS_FULLSCREEN"
     if [ -n "$QS_MONITORS" ]; then
         MONITOR_ORDER="$QS_MONITORS"
         set_profile_key "$ENV_FILE" "MONITOR_ORDER" "$QS_MONITORS"
@@ -1042,7 +1047,9 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
         # DYNAMIC_RESOLUTION_OVERRIDE/MONITOR_ID/MONITOR_<id> are kept accepted
         # by parse_env_safe (existing profiles must not break) but are no
         # longer consulted here — dynamic+floating is unconditional now.
-        MON_FLAGS=("/f" "+dynamic-resolution")
+        local fs_flag=()
+        [ "${FULLSCREEN:-1}" = "1" ] && fs_flag=("/f")
+        MON_FLAGS=("${fs_flag[@]}" "+dynamic-resolution")
         # MONITOR_ID (revived — the pre-connect checkbox menu is the only
         # writer of this key now): when set, position the window on that
         # monitor's logical origin before fullscreening it. Same
@@ -1100,7 +1107,7 @@ case "${MONITOR_MODE_OVERRIDE:-${MONITOR_MODE:-single}}" in
             if [[ "$_mres_val" =~ ^([0-9]+)x([0-9]+)$ ]]; then
                 _SINGLE_W="${BASH_REMATCH[1]}"
                 _SINGLE_H="${BASH_REMATCH[2]}"
-                MON_FLAGS=("/size:${_SINGLE_W}x${_SINGLE_H}" "/f" "+dynamic-resolution")
+                MON_FLAGS=("/size:${_SINGLE_W}x${_SINGLE_H}" "${fs_flag[@]}" "+dynamic-resolution")
                 log_event "INFO" "Modo single-monitor: MONITOR_ID=${MONITOR_ID} limita el canvas RDP a ${_SINGLE_W}x${_SINGLE_H} (resolución real del monitor sin cambios)."
             fi
             unset _mres_key _mres_val _resolved_id
@@ -1428,8 +1435,10 @@ if [ "${COMPOSITOR:-}" != "none" ]; then
             log_event "INFO" "Ventana $WM_CLASS multi-monitor: floating y posicionada en (${_MULTI_X:-0},${_MULTI_Y:-0})." 2>/dev/null || true
         fi
     elif [ "${COMPOSITOR:-}" = "niri" ]; then
-        dispatch_fullscreen
-        log_event "INFO" "Ventana $WM_CLASS fullscreen bajo niri." 2>/dev/null || true
+        if [ "${FULLSCREEN:-1}" = "1" ]; then
+            dispatch_fullscreen
+            log_event "INFO" "Ventana $WM_CLASS fullscreen bajo niri." 2>/dev/null || true
+        fi
     else
         log_event "WARN" "Ventana $WM_CLASS: geometría no soportada bajo compositor ${COMPOSITOR}." 2>/dev/null || true
     fi

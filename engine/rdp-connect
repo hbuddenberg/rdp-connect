@@ -1294,6 +1294,10 @@ case "$_eff_client" in
         export SDL_VIDEODRIVER=wayland
         CLIENT_FLAGS=("+grab-keyboard" "/mouse-motion")
         _gfx_flag=""   # no /gfx for SDL — bitmap rendering
+        if [ ! -f "$HOME/.config/freerdp/sdl-freerdp.json" ]; then
+            mkdir -p "$HOME/.config/freerdp"
+            printf '{\n  "SDL_KeyModMask": ["KMOD_NONE"],\n  "SDL_Fullscreen": "SDL_SCANCODE_F24"\n}\n' > "$HOME/.config/freerdp/sdl-freerdp.json" 2>/dev/null || true
+        fi
         log_event "INFO" "Cliente SDL (sdl-freerdp3). Multimon + dynamic-resolution (32bpp)."
         ;;
     wayland|wl)
